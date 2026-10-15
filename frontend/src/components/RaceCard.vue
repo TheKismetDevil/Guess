@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   skeleton?: boolean
 }>(), {
   skeleton: false,
@@ -8,17 +8,17 @@ const props = withDefaults(defineProps<{
 
 <template>
   <div class="race-card" :class="{ 'is-skeleton': skeleton }">
-    <!-- Skeleton mode -->
+    <!-- Skeleton mode: mirrors the HomePage card (date block + title + tags) -->
     <template v-if="skeleton">
-      <div class="card-header">
-        <div class="skeleton-block grade-badge-skeleton"></div>
-        <div class="skeleton-block title-skeleton"></div>
-        <div class="skeleton-block badge-skeleton"></div>
-      </div>
+      <div class="ui-skeleton date-skeleton"></div>
       <div class="card-body">
-        <div class="skeleton-block date-skeleton"></div>
-        <div class="skeleton-block meta-skeleton"></div>
+        <div class="ui-skeleton title-skeleton"></div>
+        <div class="tags-skeleton">
+          <div v-for="i in 5" :key="i" class="ui-skeleton tag-skeleton"></div>
+        </div>
+        <div class="ui-skeleton meta-skeleton"></div>
       </div>
+      <div class="ui-skeleton badge-skeleton"></div>
     </template>
 
     <!-- Normal mode (content slot for future stories) -->
@@ -30,76 +30,76 @@ const props = withDefaults(defineProps<{
 
 <style scoped>
 .race-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-4);
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-hairline);
   border-radius: var(--rounded-lg);
-  padding: var(--spacing-16);
-  transition: box-shadow 0.2s;
+  padding: var(--spacing-4) var(--spacing-5);
 }
 
 .race-card.is-skeleton {
   pointer-events: none;
 }
 
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-8);
-  margin-bottom: var(--spacing-12);
-}
-
 .card-body {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-8);
-}
-
-.skeleton-block {
-  background: linear-gradient(
-    90deg,
-    var(--color-surface-base) 25%,
-    var(--color-border-hairline) 50%,
-    var(--color-surface-base) 75%
-  );
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.5s ease-in-out infinite;
-  border-radius: var(--rounded-sm);
-}
-
-.grade-badge-skeleton {
-  width: 40px;
-  height: 24px;
-}
-
-.title-skeleton {
-  flex: 1;
-  height: 20px;
-  max-width: 200px;
-}
-
-.badge-skeleton {
-  width: 60px;
-  height: 22px;
-  margin-left: auto;
+  gap: var(--spacing-2);
+  min-width: 0;
 }
 
 .date-skeleton {
-  width: 120px;
-  height: 14px;
+  flex-shrink: 0;
+  width: 64px;
+  height: 68px;
+  border-radius: var(--rounded-md);
+}
+
+.title-skeleton {
+  width: 45%;
+  max-width: 220px;
+  height: 20px;
+}
+
+.tags-skeleton {
+  display: flex;
+  gap: 6px;
+}
+
+.tag-skeleton {
+  width: 40px;
+  height: 18px;
+  border-radius: var(--rounded-full);
 }
 
 .meta-skeleton {
-  width: 160px;
-  height: 14px;
+  width: 60%;
+  max-width: 260px;
+  height: 12px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .skeleton-block {
-    animation: none;
-    background: var(--color-surface-base);
-  }
+.badge-skeleton {
+  flex-shrink: 0;
+  width: 64px;
+  height: 22px;
+  border-radius: var(--rounded-full);
+}
+
+@media (max-width: 767px) {
   .race-card {
-    transition: none;
+    padding: var(--spacing-3);
+    gap: var(--spacing-3);
+  }
+
+  .date-skeleton {
+    width: 54px;
+  }
+
+  .badge-skeleton {
+    display: none;
   }
 }
 </style>

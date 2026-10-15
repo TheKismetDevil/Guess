@@ -2,6 +2,7 @@
 import { ref, onMounted, watch, onUnmounted } from 'vue'
 import { getHorses, getOriginsStats, getLocationsStats, createHorse, updateHorse, deleteHorse, toggleHemisphere } from '@/api/horses'
 import type { Horse, HorseCreatePayload, HorseUpdatePayload } from '@/types/horse'
+import ConfirmDeleteModal from '@/components/ConfirmDeleteModal.vue'
 
 type PageState = 'loading' | 'empty' | 'error' | 'success'
 
@@ -10,6 +11,34 @@ const errorMessage = ref('加载失败，请刷新重试')
 const refreshing = ref(false)
 const horses = ref<Horse[]>([])
 const search = ref('')
+const searching = ref(false)
+
+// Delete confirmation + inline notice for failures in the list view
+const deleteTarget = ref<Horse | null>(null)
+const deleting = ref(false)
+const listNotice = ref('')
+let noticeTimer: ReturnType<typeof setTimeout> | null = null
+
+function showNotice(message: string) {
+  listNotice.value = message
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => { listNotice.value = '' }, 4000)
+}
+
+function finishClass(position: number | null): string {
+  if (position === null) return ''
+  if (position === 0) return 'finish-out'
+  if (position <= 3) return `finish-${position}`
+  if (position <= 5) return 'finish-board'
+  return ''
+}
+
+/** "中山金杯 7着" → "中山金杯" when the finish is shown as a chip. */
+function stripFinish(text: string, position: number | null): string {
+  if (position && position > 0) return text.replace(new RegExp(`\\s*${position}着$`), '') || text
+  if (position === 0) return text.replace(/\s*除外\/取消$/, '') || text
+  return text
+}
 
 // DB-sourced lists
 const sortedCountries = ref<string[]>([])
@@ -128,8 +157,12 @@ function cancelNewLocation() {
   formLocation.value = ''
 }
 
-async function loadHorses() {
-  pageState.value = 'loading'
+async function loadHorses(options: { quiet?: boolean } = {}) {
+  if (options.quiet && pageState.value === 'success') {
+    searching.value = true
+  } else {
+    pageState.value = 'loading'
+  }
   errorMessage.value = '加载失败，请刷新重试'
 
   try {
@@ -157,9 +190,12 @@ async function loadHorses() {
         return a.location.localeCompare(b.location)
       })
       .map(s => s.location)
-    pageState.value = data.length === 0 ? 'empty' : 'success'
+    // An empty result for a search is "no hits", not an empty library
+    pageState.value = data.length === 0 && !search.value ? 'empty' : 'success'
   } catch {
     pageState.value = 'error'
+  } finally {
+    searching.value = false
   }
 }
 
@@ -199,7 +235,7 @@ async function handleRefresh() {
 function debouncedSearch() {
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
-    loadHorses()
+    loadHorses({ quiet: true })
   }, 300)
 }
 
@@ -344,131 +380,218 @@ function handleSave() {
   })()
 }
 
-async function handleDelete(horse: Horse) {
-  const confirmed = confirm(`确定删除马匹「${horse.name}」？此操作不可撤销。`)
-  if (!confirmed) return
+function handleDelete(horse: Horse) {
+  deleteTarget.value = horse
+}
+
+async function confirmDelete() {
+  const horse = deleteTarget.value
+  if (!horse || deleting.value) return
+  deleting.value = true
   try {
     await deleteHorse(horse.id)
     horses.value = horses.value.filter((h) => h.id !== horse.id)
-    if (horses.value.length === 0) pageState.value = 'empty'
+    if (horses.value.length === 0 && !search.value) pageState.value = 'empty'
+    deleteTarget.value = null
   } catch (err: unknown) {
     const response = (err as Record<string, unknown>)?.response as Record<string, unknown> | undefined
     const detail = response?.data as Record<string, unknown> | undefined
     const message = ((detail?.detail as Record<string, unknown> | undefined)?.message as string) || '删除失败，请重试'
-    errorMessage.value = message
-    setTimeout(() => { errorMessage.value = '加载失败，请刷新重试' }, 3000)
+    deleteTarget.value = null
+    showNotice(message)
+  } finally {
+    deleting.value = false
   }
 }
 
 onMounted(loadHorses)
 onUnmounted(() => {
   if (debounceTimer) clearTimeout(debounceTimer)
+  if (noticeTimer) clearTimeout(noticeTimer)
 })
 </script>
 
 <template>
   <div class="horses-page">
-    <header class="page-header">
-      <h1 class="page-title">马匹管理</h1>
+    <header class="ui-page-header">
+      <div>
+        <span class="ui-page-eyebrow">Admin</span>
+        <h1 class="ui-page-title">马匹管理</h1>
+        <p class="ui-page-subtitle">参赛马匹的档案库。改这里不会影响已创建比赛里的快照，需要时在比赛页点 ↻ 刷新。</p>
+      </div>
     </header>
 
-    <!-- Skeleton loading -->
-    <template v-if="pageState === 'loading'">
-      <div class="skeleton-container" role="status" aria-live="polite" aria-label="加载中">
-        <div v-for="i in 5" :key="i" class="skeleton-row"></div>
+    <!-- Toolbar stays mounted while searching so the input keeps focus -->
+    <div v-if="pageState !== 'empty'" class="toolbar">
+      <div class="search-box">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <input
+          v-model="search"
+          type="search"
+          class="ui-input search-input"
+          placeholder="搜索马匹名称…"
+          aria-label="搜索马匹名称"
+        />
+        <span v-if="searching" class="ui-spinner search-spinner" aria-hidden="true"></span>
+        <button
+          v-else-if="search"
+          type="button"
+          class="search-clear"
+          aria-label="清空搜索"
+          @click="search = ''"
+        >✕</button>
       </div>
-    </template>
+      <span v-if="pageState === 'success'" class="count-text">
+        {{ search ? `找到 ${horses.length} 匹` : `共 ${horses.length} 匹` }}
+      </span>
+      <button class="ui-btn ui-btn--primary create-btn" @click="openCreateModal">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+          <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        新建马匹
+      </button>
+    </div>
 
-    <!-- Empty state -->
-    <template v-else-if="pageState === 'empty'">
-      <div class="state-container" role="status" aria-live="polite">
-        <p class="empty-text">马匹库为空——创建第一场比赛时，参赛马匹将自动入库。</p>
-        <button class="btn btn-primary" @click="openCreateModal">新建马匹</button>
-      </div>
-    </template>
+    <Transition name="ui-fade">
+      <p v-if="listNotice" class="ui-banner ui-banner--error" role="alert">{{ listNotice }}</p>
+    </Transition>
+
+    <!-- Skeleton loading -->
+    <div v-if="pageState === 'loading'" class="skeleton-container" role="status" aria-live="polite" aria-label="加载中">
+      <div v-for="i in 6" :key="i" class="ui-skeleton skeleton-row"></div>
+    </div>
+
+    <!-- Empty library -->
+    <div v-else-if="pageState === 'empty'" class="ui-state" role="status" aria-live="polite">
+      <span class="ui-state-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 22V4" /><path d="M4 4h12l-2 4 2 4H4" />
+        </svg>
+      </span>
+      <p class="ui-state-text">马匹库为空——创建第一场比赛时，参赛马匹将自动入库。</p>
+      <button class="ui-btn ui-btn--primary" @click="openCreateModal">新建马匹</button>
+    </div>
 
     <!-- Error state -->
-    <template v-else-if="pageState === 'error'">
-      <div class="toolbar">
-        <input v-model="search" type="text" class="search-input" placeholder="搜索马匹名称..." aria-label="搜索马匹名称" />
-        <button class="btn btn-primary" @click="openCreateModal">新建马匹</button>
-      </div>
-      <div class="state-container" role="alert" aria-live="polite">
-        <p class="error-text">{{ errorMessage }}</p>
-        <button class="refresh-btn" :disabled="refreshing" @click="handleRefresh">
-          {{ refreshing ? '刷新中…' : '刷新重试' }}
-        </button>
-      </div>
-    </template>
+    <div v-else-if="pageState === 'error'" class="ui-state ui-state--error" role="alert" aria-live="polite">
+      <span class="ui-state-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+      </span>
+      <p class="ui-state-text">{{ errorMessage }}</p>
+      <button class="ui-btn ui-btn--primary" :disabled="refreshing" @click="handleRefresh">
+        <span v-if="refreshing" class="ui-spinner"></span>
+        {{ refreshing ? '刷新中…' : '刷新重试' }}
+      </button>
+    </div>
 
-    <!-- Content: horse table -->
-    <template v-else>
-      <div class="toolbar">
-        <input v-model="search" type="text" class="search-input" placeholder="搜索马匹名称..." aria-label="搜索马匹名称" />
-        <button class="btn btn-primary" @click="openCreateModal">新建马匹</button>
-      </div>
+    <!-- No search hits -->
+    <div v-else-if="horses.length === 0" class="ui-state no-hits" role="status" aria-live="polite">
+      <p class="ui-state-text">没有找到名字包含「{{ search }}」的马匹</p>
+      <button class="ui-btn ui-btn--ghost ui-btn--sm" @click="search = ''">清空搜索</button>
+    </div>
 
-      <div class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">名称</th>
-              <th scope="col">性别</th>
-              <th scope="col">年龄</th>
-              <th scope="col">出生国</th>
-              <th scope="col">所属地</th>
-              <th scope="col">父系</th>
-              <th scope="col">母父</th>
-              <th scope="col">前走</th>
-              <th scope="col">主要胜鞍</th>
-              <th scope="col">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="horse in horses" :key="horse.id">
-              <td><strong>{{ horse.name }}</strong></td>
-              <td>{{ horse.sex || '-' }}</td>
-              <td>{{ horse.birth_year ?? '-' }}</td>
-              <td>{{ horse.origin || '-' }}{{ horse.hemisphere === 'south' ? ' (南)' : horse.hemisphere === 'north' ? ' (北)' : '' }}</td>
-              <td>{{ horse.location || '-' }}</td>
-              <td>{{ horse.sire || '-' }}</td>
-              <td>{{ horse.damsire || '-' }}</td>
-              <td>
-                <template v-if="horse.previous_result">
-                  <template v-if="horse.previous_result_date">{{ horse.previous_result_date }} </template>
-                  {{ horse.previous_result }}
-                </template>
-                <span v-else>-</span>
-              </td>
-              <td>
-                <template v-if="horse.best_win">
-                  <template v-if="horse.best_win_date">{{ horse.best_win_date }} </template>
-                  {{ horse.best_win }}
-                </template>
-                <span v-else>-</span>
-              </td>
-              <td class="actions-cell">
-                <button class="btn btn-sm" @click="openEditModal(horse)">编辑</button>
-                <button class="btn btn-sm btn-danger" @click="handleDelete(horse)">删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </template>
+    <!-- Horse table (cards on phones) -->
+    <div v-else class="table-wrapper" :class="{ 'is-searching': searching }">
+      <table class="horse-table">
+        <thead>
+          <tr>
+            <th scope="col">马匹</th>
+            <th scope="col">产地 · 所属</th>
+            <th scope="col">血统</th>
+            <th scope="col">前走</th>
+            <th scope="col">主要胜鞍</th>
+            <th scope="col" class="col-actions"><span class="sr-only">操作</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="horse in horses" :key="horse.id">
+            <td class="cell-name">
+              <div class="name-stack">
+                <span class="horse-name">{{ horse.name }}</span>
+                <span class="name-meta">
+                  <span v-if="horse.sex" class="meta-chip">{{ horse.sex }}</span>
+                  <span v-if="horse.birth_year" class="meta-year">{{ horse.birth_year }} 年生</span>
+                </span>
+              </div>
+            </td>
+            <td data-label="产地 · 所属">
+              <span v-if="horse.origin">{{ horse.origin }}<small v-if="horse.hemisphere" class="muted">（{{ horse.hemisphere === 'south' ? '南' : '北' }}）</small></span>
+              <span v-else class="muted">-</span>
+              <span class="muted sep">·</span>
+              <span :class="{ muted: !horse.location }">{{ horse.location || '-' }}</span>
+            </td>
+            <td data-label="血统">
+              <span>{{ horse.sire || '-' }}</span>
+              <span class="cross">×</span>
+              <span class="muted">{{ horse.damsire || '-' }}</span>
+            </td>
+            <td data-label="前走">
+              <template v-if="horse.previous_result">
+                <span
+                  v-if="horse.previous_result_position !== null"
+                  class="finish-chip"
+                  :class="finishClass(horse.previous_result_position)"
+                >{{ horse.previous_result_position === 0 ? '除外' : `${horse.previous_result_position}着` }}</span>
+                <span>{{ stripFinish(horse.previous_result, horse.previous_result_position) }}</span>
+                <span v-if="horse.previous_result_date" class="cell-date">{{ horse.previous_result_date }}</span>
+              </template>
+              <span v-else class="muted">-</span>
+            </td>
+            <td data-label="主要胜鞍">
+              <template v-if="horse.best_win">
+                <span>{{ horse.best_win }}</span>
+                <span v-if="horse.best_win_date" class="cell-date">{{ horse.best_win_date }}</span>
+              </template>
+              <span v-else class="muted">-</span>
+            </td>
+            <td class="col-actions">
+              <div class="row-actions">
+                <button class="row-btn" :title="`编辑「${horse.name}」`" :aria-label="`编辑${horse.name}`" @click="openEditModal(horse)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                  </svg>
+                  <span class="row-btn-label">编辑</span>
+                </button>
+                <button class="row-btn row-btn-danger" :title="`删除「${horse.name}」`" :aria-label="`删除${horse.name}`" @click="handleDelete(horse)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" />
+                  </svg>
+                  <span class="row-btn-label">删除</span>
+                </button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Delete confirmation -->
+    <ConfirmDeleteModal
+      v-if="deleteTarget"
+      title="删除马匹"
+      :item-name="deleteTarget.name"
+      message="确定删除马匹「{name}」？此操作不可撤销。"
+      :loading="deleting"
+      @confirm="confirmDelete"
+      @cancel="deleteTarget = null"
+    />
 
     <!-- Create/Edit Modal -->
     <Teleport to="body">
-      <div v-if="showModal" class="modal-overlay">
-        <div class="modal-content" role="dialog" :aria-label="editingHorse ? '编辑马匹' : '新建马匹'">
+      <div v-if="showModal" class="modal-overlay ui-anim-overlay">
+        <div class="modal-content ui-anim-dialog" role="dialog" :aria-label="editingHorse ? '编辑马匹' : '新建马匹'">
           <h2 class="modal-title">{{ editingHorse ? '编辑马匹' : '新建马匹' }}</h2>
 
-          <div v-if="modalError" class="error-banner">{{ modalError }}</div>
+          <div v-if="modalError" class="ui-banner ui-banner--error">{{ modalError }}</div>
 
           <form @submit.prevent="handleSave" class="horse-form">
             <div class="form-row">
               <label class="form-label">
-                名称 <span class="required">*</span>
+                <span>名称 <span class="required">*</span></span>
                 <input v-model="formName" type="text" class="form-input" required maxlength="100" placeholder="马匹名称" />
               </label>
             </div>
@@ -494,7 +617,7 @@ onUnmounted(() => {
                     <option v-if="formOrigin && !sortedCountries.includes(formOrigin)" :value="formOrigin">{{ formOrigin }} (未保存)</option>
                     <option v-for="c in sortedCountries" :key="c" :value="c">{{ c }}</option>
                   </select>
-                  <template v-if="formHemisphere">
+                  <div v-if="formHemisphere" class="hemisphere-row">
                     <span class="hemisphere-badge">{{ formHemisphere === 'north' ? '北半球' : '南半球' }}</span>
                     <button
                       v-if="sortedCountries.includes(formOrigin)"
@@ -505,7 +628,7 @@ onUnmounted(() => {
                     >
                       {{ togglingHemisphere ? '切换中…' : '切换半球' }}
                     </button>
-                  </template>
+                  </div>
                 </template>
                 <template v-else>
                   <input
@@ -599,8 +722,9 @@ onUnmounted(() => {
             </div>
 
             <div class="form-actions">
-              <button type="button" class="btn btn-cancel" @click="showModal = false">取消</button>
-              <button type="submit" class="btn btn-primary" :disabled="saving">
+              <button type="button" class="ui-btn ui-btn--ghost" @click="showModal = false">取消</button>
+              <button type="submit" class="ui-btn ui-btn--primary" :disabled="saving">
+                <span v-if="saving" class="ui-spinner"></span>
                 {{ saving ? '保存中...' : (editingHorse ? '保存修改' : '确认创建') }}
               </button>
             </div>
@@ -613,105 +737,397 @@ onUnmounted(() => {
 
 <style scoped>
 .horses-page {
-  padding: var(--spacing-4, 16px);
+  padding: var(--spacing-5) var(--spacing-4);
   max-width: 1280px;
   margin: 0 auto;
 }
-.page-header { margin-bottom: var(--spacing-4, 16px); }
-.page-title {
-  font-family: 'Barlow Condensed', system-ui, sans-serif;
-  font-size: var(--text-heading, 24px);
-  font-weight: 600;
-  color: var(--color-primary, #1A5632);
-  margin: 0;
-}
+
+/* =========================================
+   Toolbar
+   ========================================= */
+
 .toolbar {
   display: flex;
-  gap: var(--spacing-3, 12px);
-  margin-bottom: var(--spacing-4, 16px);
   flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-3);
+  margin-bottom: var(--spacing-4);
 }
+
+.search-box {
+  position: relative;
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  color: var(--color-ink-disabled);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
 .search-input {
-  flex: 1;
-  min-width: 200px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border-hairline, #D4DCD0);
-  border-radius: var(--rounded-sm, 6px);
-  font-size: var(--text-body, 16px);
-  font-family: var(--font-body);
-  color: var(--color-ink-primary, #1A2E1A);
-  background: var(--color-surface-raised, #FFFFFF);
+  padding-left: 40px;
+  padding-right: 40px;
+  background: var(--color-surface-raised);
 }
-.search-input:focus {
-  outline: 2px solid var(--color-primary, #1A5632);
-  outline-offset: 2px;
+
+.search-input::-webkit-search-cancel-button {
+  display: none;
 }
-.btn {
+
+.search-spinner,
+.search-clear {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  margin-top: -8px;
+}
+
+.search-spinner {
+  color: var(--color-primary);
+}
+
+.search-clear {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  right: 12px;
+  border-radius: 50%;
+  font-size: 11px;
+  color: #FFFFFF;
+  background: var(--color-ink-disabled);
+  transition: background var(--duration-fast) ease;
+}
+
+.search-clear:hover {
+  background: var(--color-ink-secondary);
+}
+
+.count-text {
+  font-size: var(--text-body-sm);
+  color: var(--color-ink-secondary);
+}
+
+.create-btn {
+  margin-left: auto;
+}
+
+.btn-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.skeleton-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.skeleton-row {
+  height: 56px;
+  border-radius: var(--rounded-md);
+}
+
+.no-hits {
+  min-height: 30vh;
+}
+
+/* =========================================
+   Table
+   ========================================= */
+
+.table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--rounded-lg);
+  box-shadow: var(--shadow-sm);
+  animation: rise-in var(--duration-slow) var(--ease-out) backwards;
+  transition: opacity var(--duration-base) ease;
+}
+
+.table-wrapper.is-searching {
+  opacity: 0.55;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body-sm);
+}
+
+thead tr {
+  background: var(--color-surface-base);
+}
+
+th {
+  padding: var(--spacing-3) var(--spacing-3);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  white-space: nowrap;
+  color: var(--color-ink-secondary);
+  border-bottom: 1px solid var(--color-border-hairline);
+}
+
+td {
+  padding: var(--spacing-3);
+  vertical-align: middle;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border-hairline);
+}
+
+tbody tr {
+  transition: background var(--duration-fast) ease;
+}
+
+tbody tr:hover {
+  background: var(--color-primary-tint);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.name-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.horse-name {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--color-ink-primary);
+}
+
+.name-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meta-chip {
+  padding: 0 7px;
+  border-radius: var(--rounded-full);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-ink-secondary);
+  background: var(--color-surface-sunken);
+}
+
+.meta-year {
+  font-size: 12px;
+  color: var(--color-ink-secondary);
+}
+
+.muted {
+  color: var(--color-ink-secondary);
+}
+
+.sep,
+.cross {
+  margin: 0 6px;
+  font-size: 12px;
+  color: var(--color-ink-disabled);
+}
+
+.cell-date {
+  margin-left: 6px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  color: var(--color-ink-disabled);
+}
+
+.finish-chip {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+  color: var(--color-ink-secondary);
+  background: var(--color-surface-sunken);
+}
+
+.finish-chip.finish-1 { color: #FFFFFF; background: var(--gradient-gold); }
+.finish-chip.finish-2 { color: #FFFFFF; background: var(--gradient-silver); }
+.finish-chip.finish-3 { color: #FFFFFF; background: var(--gradient-bronze); }
+.finish-chip.finish-board { color: var(--color-primary); background: var(--color-primary-tint); }
+.finish-chip.finish-out { color: var(--color-destructive); background: var(--color-destructive-tint); }
+
+.col-actions {
+  width: 1%;
+  text-align: right;
+}
+
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.row-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 8px 16px;
-  border: none;
-  border-radius: var(--rounded-sm, 6px);
-  font-size: var(--text-body-sm, 14px);
-  cursor: pointer;
-  min-height: 44px;
-  white-space: nowrap;
-  transition: opacity 0.15s;
+  gap: 4px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--rounded-full);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--color-ink-secondary);
+  transition: color var(--duration-fast) ease, background var(--duration-fast) ease, transform var(--duration-fast) var(--ease-out);
 }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary { background: var(--color-primary, #1A5632); color: #FFFFFF; }
-.btn-primary:hover:not(:disabled) { background: var(--color-primary-light, #2D7A4F); }
-.btn-sm {
-  padding: 4px 12px;
-  font-size: var(--text-caption, 12px);
-  min-height: 44px;
-  background: var(--color-surface-raised, #FFFFFF);
-  border: 1px solid var(--color-border-hairline, #D4DCD0);
-  color: var(--color-ink-primary, #1A2E1A);
+
+.row-btn svg {
+  width: 15px;
+  height: 15px;
 }
-.btn-sm:hover { background: var(--color-surface-base, #F8FAF7); }
-.btn-danger { color: var(--color-destructive, #C53030); border-color: var(--color-destructive, #C53030); }
-.btn-danger:hover { background: var(--color-destructive-light, #FED7D7); }
-.btn-cancel { background: var(--color-surface-base, #F8FAF7); border: 1px solid var(--color-border-hairline, #D4DCD0); color: var(--color-ink-primary, #1A2E1A); }
-.text-muted { font-size: var(--text-caption, 12px); color: var(--color-ink-secondary, #4A5A4A); }
-.skeleton-container { display: flex; flex-direction: column; gap: var(--spacing-8); }
-.skeleton-row {
-  height: 40px;
-  background: linear-gradient(90deg, var(--color-surface-base) 25%, var(--color-border-hairline) 50%, var(--color-surface-base) 75%);
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.5s ease-in-out infinite;
-  border-radius: var(--rounded-sm);
+
+.row-btn:hover {
+  color: var(--color-primary);
+  background: var(--color-surface-raised);
+  box-shadow: inset 0 0 0 1px var(--color-primary-tint-strong);
 }
-.state-container { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 30vh; text-align: center; gap: var(--spacing-4, 16px); padding: var(--spacing-8, 32px) var(--spacing-4, 16px); }
-.empty-text { color: var(--color-ink-secondary); font-size: var(--text-body); max-width: 400px; line-height: 1.6; }
-.error-text { color: var(--color-destructive); font-size: var(--text-body); }
-.refresh-btn { padding: 10px 24px; font-size: var(--text-body); font-weight: 600; color: #ffffff; background: var(--color-primary); border: none; border-radius: var(--rounded-md); cursor: pointer; min-height: 44px; transition: background 0.2s; }
-.refresh-btn:hover { background: var(--color-primary-light); }
-.refresh-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-table { width: 100%; border-collapse: collapse; font-size: var(--text-body-sm, 14px); }
-th { text-align: left; padding: var(--spacing-3, 12px) var(--spacing-2, 8px); font-weight: 600; color: var(--color-ink-secondary, #4A5A4A); border-bottom: 2px solid var(--color-border-hairline, #D4DCD0); white-space: nowrap; }
-td { padding: var(--spacing-3, 12px) var(--spacing-2, 8px); border-bottom: 1px solid var(--color-border-hairline, #D4DCD0); white-space: nowrap; }
-.actions-cell { display: flex; gap: var(--spacing-2, 8px); }
-.modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: var(--spacing-16); }
-.modal-content { background: var(--color-surface-raised, #FFFFFF); border-radius: var(--rounded-lg, 14px); padding: var(--spacing-20, 24px); width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12); }
-.modal-title { font-family: 'Barlow Condensed', system-ui, sans-serif; font-size: 22px; font-weight: 600; color: var(--color-primary, #1A5632); margin-bottom: var(--spacing-16, 20px); }
-.horse-form { display: flex; flex-direction: column; gap: var(--spacing-12, 16px); }
+
+.row-btn:active {
+  transform: scale(0.95);
+}
+
+.row-btn-danger:hover {
+  color: var(--color-destructive);
+  box-shadow: inset 0 0 0 1px var(--color-destructive-light);
+}
+
+/* Phones: each row becomes a card, cells become labelled lines */
+@media (max-width: 767px) {
+  .create-btn {
+    margin-left: 0;
+  }
+
+  .search-box {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .table-wrapper {
+    overflow: visible;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+  }
+
+  .horse-table thead {
+    display: none;
+  }
+
+  .horse-table,
+  .horse-table tbody,
+  .horse-table tr,
+  .horse-table td {
+    display: block;
+  }
+
+  .horse-table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-3);
+  }
+
+  .horse-table tr {
+    position: relative;
+    padding: var(--spacing-3) var(--spacing-4);
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border-hairline);
+    border-radius: var(--rounded-lg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .horse-table tbody tr:hover {
+    background: var(--color-surface-raised);
+  }
+
+  .horse-table td {
+    padding: 3px 0;
+    border: none;
+    white-space: normal;
+  }
+
+  .horse-table td[data-label] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    font-size: 13px;
+  }
+
+  .horse-table td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 5.5em;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-ink-disabled);
+  }
+
+  .cell-name {
+    padding-right: 96px !important;
+    margin-bottom: 4px;
+  }
+
+  .horse-table .col-actions {
+    position: absolute;
+    top: var(--spacing-3);
+    right: var(--spacing-3);
+    width: auto;
+    padding: 0;
+  }
+
+  .row-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    justify-content: center;
+    background: var(--color-surface-base);
+  }
+
+  .row-btn-label {
+    display: none;
+  }
+}
+
+.modal-overlay { position: fixed; inset: 0; background: rgba(13, 30, 18, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: var(--spacing-4); }
+.modal-content { background: var(--color-surface-raised, #FFFFFF); border-radius: var(--rounded-xl); padding: var(--spacing-6); width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto; }
+.modal-title { font-family: var(--font-display); font-size: var(--text-heading); font-weight: 700; color: var(--color-ink-primary); margin-bottom: var(--spacing-5); }
+.horse-form { display: flex; flex-direction: column; gap: var(--spacing-4); }
 .form-row { width: 100%; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacing-12, 16px); }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacing-4); }
 @media (max-width: 768px) { .form-grid { grid-template-columns: 1fr; } }
 .form-label { display: flex; flex-direction: column; gap: var(--spacing-1, 4px); font-size: var(--text-body-sm, 14px); font-weight: 500; color: var(--color-ink-primary, #1A2E1A); }
 .required { color: var(--color-destructive, #C53030); }
-.form-input { padding: 8px 12px; border: 1px solid var(--color-border-hairline, #D4DCD0); border-radius: var(--rounded-sm, 6px); font-size: var(--text-body, 16px); font-family: var(--font-body); color: var(--color-ink-primary, #1A2E1A); background: var(--color-surface-base, #F8FAF7); }
-.form-input:focus { outline: 2px solid var(--color-primary, #1A5632); outline-offset: 2px; }
+.form-input { min-height: 42px; padding: 8px 12px; border: 1px solid var(--color-border-hairline); border-radius: var(--rounded-md); font-size: var(--text-body); font-family: var(--font-body); color: var(--color-ink-primary); background: var(--color-surface-base); transition: border-color var(--duration-fast) ease, box-shadow var(--duration-base) var(--ease-out), background var(--duration-fast) ease; }
+.form-input:focus { outline: none; background: var(--color-surface-raised); border-color: var(--color-primary); box-shadow: 0 0 0 4px rgba(26, 86, 50, 0.14); }
 select.form-input { cursor: pointer; appearance: auto; }
-.hemisphere-badge { display: inline-block; margin-top: 4px; padding: 2px 8px; font-size: var(--text-caption, 12px); border-radius: var(--rounded-sm, 6px); background: var(--color-surface-base, #F8FAF7); color: var(--color-ink-secondary); }
+.hemisphere-row { display: flex; align-items: center; gap: var(--spacing-2); margin-top: 4px; }
+.hemisphere-badge { display: inline-block; padding: 1px 10px; font-size: var(--text-caption, 12px); font-weight: 600; border-radius: var(--rounded-full); background: var(--color-primary-tint); color: var(--color-primary); }
 .hemisphere-select-row { display: flex; gap: 16px; margin-top: 8px; }
 .radio-label { display: flex; align-items: center; gap: 4px; font-size: var(--text-body-sm, 14px); cursor: pointer; }
 .add-cancel-row { display: flex; gap: 8px; margin-top: 8px; }
 .btn-sm.btn-primary { background: var(--color-primary, #1A5632); color: #fff; border: none; }
-.btn-hemisphere-toggle { margin-top: 4px; margin-left: 8px; padding: 2px 8px; font-size: var(--text-caption, 12px); border: 1px solid var(--color-border-strong); border-radius: var(--rounded-sm, 6px); background: transparent; cursor: pointer; min-height: 28px; color: var(--color-primary); }
+.btn-hemisphere-toggle { padding: 2px 10px; font-size: var(--text-caption, 12px); border: 1px solid var(--color-border-strong); border-radius: var(--rounded-sm, 6px); background: transparent; cursor: pointer; min-height: 28px; color: var(--color-primary); }
 .btn-hemisphere-toggle:hover:not(:disabled) { background: var(--color-surface-base); }
 .btn-hemisphere-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -747,11 +1163,31 @@ select.form-input { cursor: pointer; appearance: auto; }
   }
 }
 
-.form-actions { display: flex; gap: var(--spacing-3, 12px); justify-content: flex-end; margin-top: var(--spacing-8, 12px); }
-.error-banner { padding: var(--spacing-3, 12px); margin-bottom: var(--spacing-3, 12px); background: var(--color-destructive-light, #FED7D7); color: var(--color-destructive, #C53030); border-radius: var(--rounded-sm, 6px); font-size: var(--text-body-sm, 14px); }
+.form-actions { display: flex; gap: var(--spacing-3); justify-content: flex-end; margin-top: var(--spacing-2); }
 
-@media (prefers-reduced-motion: reduce) {
-  .skeleton-row { animation: none; background: var(--color-surface-base); }
-  .refresh-btn, .btn { transition: none; }
+
+/* Small buttons inside the edit modal (country / location add rows) */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--rounded-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform var(--duration-fast) var(--ease-out), filter var(--duration-fast) ease, background var(--duration-fast) ease;
 }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn-sm {
+  padding: 4px 12px;
+  min-height: 32px;
+  font-size: var(--text-caption);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-hairline);
+  color: var(--color-ink-primary);
+}
+.btn-sm:hover { background: var(--color-surface-base); }
+.btn-sm.btn-primary { background: var(--gradient-brand-soft); color: #FFFFFF; border: none; }
+.btn-sm.btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
 </style>

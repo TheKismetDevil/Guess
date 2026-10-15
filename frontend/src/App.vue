@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { RouterView } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -12,11 +11,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <AppLayout>
-    <RouterView />
-  </AppLayout>
+  <!-- AppLayout owns the RouterView so it can animate page changes and
+       reset its scroll container between pages. -->
+  <AppLayout />
 </template>
-
-<style>
-/* Global reset handled in assets/styles/base.css */
-</style>

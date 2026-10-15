@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import AuthShell from '@/components/AuthShell.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -96,264 +97,114 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="register-page">
-    <div class="register-card">
-      <h1 class="register-title">注册</h1>
+  <AuthShell title="注册" subtitle="凭邀请码加入竞猜圈">
+    <form @submit.prevent="handleSubmit" novalidate>
+      <!-- Global error -->
+      <div v-if="globalError" :key="globalError" class="ui-banner ui-banner--error" role="alert" aria-live="polite">
+        {{ globalError }}
+      </div>
 
-      <form @submit.prevent="handleSubmit" novalidate>
-        <!-- Global error -->
-        <div v-if="globalError" class="error-banner" role="alert" aria-live="polite">
-          {{ globalError }}
-        </div>
+      <!-- Username -->
+      <div class="ui-field">
+        <label class="ui-label" for="username">用户名</label>
+        <input
+          id="username"
+          v-model="username"
+          class="ui-input"
+          type="text"
+          placeholder="请输入用户名"
+          maxlength="20"
+          :aria-invalid="!!fieldErrors.username"
+          :aria-describedby="fieldErrors.username ? 'username-error' : undefined"
+        />
+        <p v-if="fieldErrors.username" :id="'username-error'" class="ui-field-error" role="alert">
+          {{ fieldErrors.username }}
+        </p>
+      </div>
 
-        <!-- Username -->
-        <div class="form-field">
-          <label for="username">用户名</label>
-          <input
-            id="username"
-            v-model="username"
-            type="text"
-            placeholder="请输入用户名"
-            maxlength="20"
-            :aria-invalid="!!fieldErrors.username"
-            :aria-describedby="fieldErrors.username ? 'username-error' : undefined"
-          />
-          <p v-if="fieldErrors.username" :id="'username-error'" class="field-error" role="alert">
-            {{ fieldErrors.username }}
-          </p>
-        </div>
+      <!-- Password -->
+      <div class="ui-field">
+        <label class="ui-label" for="password">密码（至少 6 位）</label>
+        <input
+          id="password"
+          v-model="password"
+          class="ui-input"
+          type="password"
+          placeholder="请输入密码"
+          maxlength="128"
+          :aria-invalid="!!fieldErrors.password"
+          :aria-describedby="fieldErrors.password ? 'password-error' : undefined"
+        />
+        <p v-if="fieldErrors.password" :id="'password-error'" class="ui-field-error" role="alert">
+          {{ fieldErrors.password }}
+        </p>
+      </div>
 
-        <!-- Password -->
-        <div class="form-field">
-          <label for="password">密码（至少 6 位）</label>
-          <input
-            id="password"
-            v-model="password"
-            type="password"
-            placeholder="请输入密码"
-            maxlength="128"
-            :aria-invalid="!!fieldErrors.password"
-            :aria-describedby="fieldErrors.password ? 'password-error' : undefined"
-          />
-          <p v-if="fieldErrors.password" :id="'password-error'" class="field-error" role="alert">
-            {{ fieldErrors.password }}
-          </p>
-        </div>
+      <!-- QQ -->
+      <div class="ui-field">
+        <label class="ui-label" for="qq">QQ 号</label>
+        <input
+          id="qq"
+          v-model="qq"
+          class="ui-input"
+          type="text"
+          placeholder="请输入 QQ 号"
+          maxlength="20"
+          inputmode="numeric"
+          :aria-invalid="!!fieldErrors.qq"
+          :aria-describedby="fieldErrors.qq ? 'qq-error' : undefined"
+        />
+        <p v-if="fieldErrors.qq" :id="'qq-error'" class="ui-field-error" role="alert">
+          {{ fieldErrors.qq }}
+        </p>
+      </div>
 
-        <!-- QQ -->
-        <div class="form-field">
-          <label for="qq">QQ 号</label>
-          <input
-            id="qq"
-            v-model="qq"
-            type="text"
-            placeholder="请输入 QQ 号"
-            maxlength="20"
-            inputmode="numeric"
-            :aria-invalid="!!fieldErrors.qq"
-            :aria-describedby="fieldErrors.qq ? 'qq-error' : undefined"
-          />
-          <p v-if="fieldErrors.qq" :id="'qq-error'" class="field-error" role="alert">
-            {{ fieldErrors.qq }}
-          </p>
-        </div>
+      <!-- Invite code -->
+      <div class="ui-field">
+        <label class="ui-label" for="invite-code">邀请码</label>
+        <input
+          id="invite-code"
+          v-model="inviteCode"
+          type="text"
+          placeholder="请输入邀请码"
+          maxlength="8"
+          class="ui-input invite-input"
+          :aria-invalid="!!fieldErrors.inviteCode"
+          :aria-describedby="fieldErrors.inviteCode ? 'invite-code-error' : undefined"
+        />
+        <p v-if="fieldErrors.inviteCode" :id="'invite-code-error'" class="ui-field-error" role="alert">
+          {{ fieldErrors.inviteCode }}
+        </p>
+      </div>
 
-        <!-- Invite code -->
-        <div class="form-field">
-          <label for="invite-code">邀请码</label>
-          <input
-            id="invite-code"
-            v-model="inviteCode"
-            type="text"
-            placeholder="请输入邀请码"
-            maxlength="8"
-            class="invite-input"
-            :aria-invalid="!!fieldErrors.inviteCode"
-            :aria-describedby="fieldErrors.inviteCode ? 'invite-code-error' : undefined"
-          />
-          <p v-if="fieldErrors.inviteCode" :id="'invite-code-error'" class="field-error" role="alert">
-            {{ fieldErrors.inviteCode }}
-          </p>
-        </div>
+      <!-- Submit -->
+      <button
+        type="submit"
+        class="ui-btn ui-btn--primary ui-btn--block submit-btn"
+        :disabled="loading"
+        :aria-busy="loading"
+      >
+        <span v-if="loading" class="ui-spinner"></span>
+        {{ loading ? '注册中...' : '注  册' }}
+      </button>
+    </form>
 
-        <!-- Submit -->
-        <button
-          type="submit"
-          class="submit-btn"
-          :disabled="loading"
-          :aria-busy="loading"
-        >
-          <span v-if="loading" class="spinner"></span>
-          {{ loading ? '注册中...' : '注  册' }}
-        </button>
-      </form>
-
-      <p class="login-link">
-        已有账号？<router-link to="/login">去登录</router-link>
-      </p>
-    </div>
-  </div>
+    <template #footer>
+      <p>已有账号？<router-link to="/login">去登录</router-link></p>
+    </template>
+  </AuthShell>
 </template>
 
 <style scoped>
-.register-page {
-  min-height: 100dvh;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-6) var(--spacing-4);
-  background: var(--color-surface-base);
-}
-
-.register-card {
-  width: 100%;
-  max-width: 400px;
-  background: var(--color-surface-raised);
-  border-radius: var(--rounded-lg);
-  padding: var(--spacing-8);
-  box-shadow: var(--shadow-md);
-}
-
-.register-title {
-  font-family: 'Barlow Condensed', system-ui, sans-serif;
-  font-size: 36px;
-  font-weight: 600;
-  color: var(--color-primary);
-  text-align: center;
-  margin-bottom: var(--spacing-6);
-}
-
-.form-field {
-  margin-bottom: var(--spacing-5);
-}
-
-.form-field label {
-  display: block;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-ink-primary);
-  margin-bottom: var(--spacing-2);
-}
-
-.form-field input {
-  width: 100%;
-  padding: var(--spacing-3) var(--spacing-3);
-  font-size: 16px;
-  color: var(--color-ink-primary);
-  background: var(--color-surface-base);
-  border: 1px solid var(--color-border-hairline);
-  border-radius: var(--rounded-md);
-  outline: none;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-  min-height: 44px;
-}
-
-.form-field input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 25%, transparent);
-}
-
-.form-field input[aria-invalid="true"] {
-  border-color: var(--color-destructive);
-}
-
 .invite-input {
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: 0.3em;
   text-transform: uppercase;
-  letter-spacing: 2px;
-  font-family: 'Barlow Condensed', monospace;
-}
-
-.field-error {
-  font-size: 12px;
-  color: var(--color-destructive);
-  margin-top: var(--spacing-4);
-}
-
-.error-banner {
-  background: var(--color-destructive-light);
-  color: var(--color-destructive);
-  padding: var(--spacing-3);
-  border-radius: var(--rounded-md);
-  font-size: 14px;
-  margin-bottom: var(--spacing-4);
-  text-align: center;
 }
 
 .submit-btn {
-  width: 100%;
-  padding: 12px;
-  font-size: 16px;
-  font-weight: 600;
-  color: #ffffff;
-  background: var(--color-primary);
-  border: none;
-  border-radius: var(--rounded-md);
-  cursor: pointer;
-  transition: background 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-2);
-  min-height: 44px;
-}
-
-.submit-btn:hover:not(:disabled) {
-  background: var(--color-primary-light);
-}
-
-.submit-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.submit-btn:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #ffffff;
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.login-link {
-  text-align: center;
-  margin-top: var(--spacing-5);
-  font-size: 14px;
-  color: var(--color-ink-secondary);
-}
-
-.login-link a {
-  color: var(--color-primary);
-  font-weight: 600;
-  text-decoration: none;
-  transition: opacity var(--transition-fast);
-}
-
-.login-link a:hover {
-  text-decoration: underline;
-  opacity: 0.85;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
-  .form-field input {
-    transition: none;
-  }
-  .submit-btn {
-    transition: none;
-  }
+  margin-top: var(--spacing-2);
+  min-height: 48px;
 }
 </style>

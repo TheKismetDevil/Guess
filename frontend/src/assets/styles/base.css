@@ -26,6 +26,10 @@ body {
   font-family: var(--font-body);
   color: var(--color-ink-primary);
   background-color: var(--color-surface-base);
+  background-image:
+    radial-gradient(1100px 520px at 100% -8%, rgba(45, 122, 79, 0.09), transparent 62%),
+    radial-gradient(900px 480px at -12% 108%, rgba(184, 150, 12, 0.07), transparent 60%);
+  background-attachment: fixed;
   line-height: 1.6;
   min-width: 320px;
   min-height: 100vh;
@@ -135,6 +139,49 @@ table {
 }
 
 /* =========================================
+   Shared Motion Keyframes
+   Used by ui.css primitives and page components.
+   ========================================= */
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pop-in {
+  0% { opacity: 0; transform: scale(0.6); }
+  60% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes shake-x {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  80%, 100% { transform: scale(2.6); opacity: 0; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* =========================================
    Reduced Motion
    ========================================= */
 
@@ -144,7 +191,9 @@ table {
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
 }

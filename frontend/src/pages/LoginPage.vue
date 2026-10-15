@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter, useRoute, type LocationQueryValue } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import AuthShell from '@/components/AuthShell.vue'
 
 type LoginMode = 'username' | 'qq' | 'invite_code'
 
@@ -34,7 +35,7 @@ const tabs = [
   { mode: 'qq' as LoginMode, label: 'QQ登录' },
   { mode: 'invite_code' as LoginMode, label: '邀请码登录' },
 ]
-
+const activeTabIndex = computed(() => tabs.findIndex(t => t.mode === loginMode.value))
 
 function switchMode(mode: LoginMode) {
   loginMode.value = mode
@@ -114,48 +115,48 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="login-page">
-    <div class="login-card">
-      <h1 class="login-title">登录</h1>
+  <AuthShell title="登录" subtitle="欢迎回来，今天看好哪匹马？">
+    <form @submit.prevent="handleSubmit" novalidate>
+      <!-- Session expired -->
+      <div v-if="sessionExpiredMessage" class="ui-banner ui-banner--error" role="alert" aria-live="polite">
+        {{ sessionExpiredMessage }}
+      </div>
 
-      <form @submit.prevent="handleSubmit" novalidate>
-        <!-- Session expired -->
-        <div v-if="sessionExpiredMessage" class="error-banner" role="alert" aria-live="polite">
-          {{ sessionExpiredMessage }}
-        </div>
+      <!-- Success banner -->
+      <div v-if="successMessage" class="ui-banner ui-banner--success" role="status" aria-live="polite">
+        {{ successMessage }}
+      </div>
 
-        <!-- Success banner -->
-        <div v-if="successMessage" class="success-banner" role="status" aria-live="polite">
-          {{ successMessage }}
-        </div>
+      <!-- Error -->
+      <div v-if="errorMessage" :key="errorMessage" class="ui-banner ui-banner--error" role="alert" aria-live="polite">
+        {{ errorMessage }}
+      </div>
 
-        <!-- Error -->
-        <div v-if="errorMessage" class="error-banner" role="alert" aria-live="polite">
-          {{ errorMessage }}
-        </div>
+      <!-- Mode tabs -->
+      <div class="tab-bar" role="tablist" :style="{ '--tab-index': activeTabIndex, '--tab-count': tabs.length }">
+        <span class="tab-thumb" aria-hidden="true"></span>
+        <button
+          v-for="tab in tabs"
+          :key="tab.mode"
+          :class="['tab-btn', { active: loginMode === tab.mode }]"
+          :aria-selected="loginMode === tab.mode"
+          role="tab"
+          type="button"
+          @click="switchMode(tab.mode)"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
 
-        <!-- Mode tabs -->
-        <div class="tab-bar" role="tablist">
-          <button
-            v-for="tab in tabs"
-            :key="tab.mode"
-            :class="['tab-btn', { active: loginMode === tab.mode }]"
-            :aria-selected="loginMode === tab.mode"
-            role="tab"
-            type="button"
-            @click="switchMode(tab.mode)"
-          >
-            {{ tab.label }}
-          </button>
-        </div>
-
+      <Transition name="mode-swap" mode="out-in">
         <!-- Username mode -->
-        <template v-if="loginMode === 'username'">
-          <div class="form-field">
-            <label for="username">用户名</label>
+        <div v-if="loginMode === 'username'" key="username">
+          <div class="ui-field">
+            <label class="ui-label" for="username">用户名</label>
             <input
               id="username"
               v-model="username"
+              class="ui-input"
               type="text"
               placeholder="请输入用户名"
               maxlength="20"
@@ -164,11 +165,12 @@ async function handleSubmit() {
               @input="clearError"
             />
           </div>
-          <div class="form-field">
-            <label for="password">密码</label>
+          <div class="ui-field">
+            <label class="ui-label" for="password">密码</label>
             <input
               id="password"
               v-model="password"
+              class="ui-input"
               type="password"
               placeholder="请输入密码"
               maxlength="128"
@@ -177,15 +179,16 @@ async function handleSubmit() {
               @input="clearError"
             />
           </div>
-        </template>
+        </div>
 
         <!-- QQ mode -->
-        <template v-if="loginMode === 'qq'">
-          <div class="form-field">
-            <label for="login-qq">QQ 号</label>
+        <div v-else-if="loginMode === 'qq'" key="qq">
+          <div class="ui-field">
+            <label class="ui-label" for="login-qq">QQ 号</label>
             <input
               id="login-qq"
               v-model="qq"
+              class="ui-input"
               type="text"
               placeholder="请输入绑定的 QQ 号"
               maxlength="20"
@@ -194,11 +197,12 @@ async function handleSubmit() {
               @input="clearError"
             />
           </div>
-          <div class="form-field">
-            <label for="qq-password">密码</label>
+          <div class="ui-field">
+            <label class="ui-label" for="qq-password">密码</label>
             <input
               id="qq-password"
               v-model="password"
+              class="ui-input"
               type="password"
               placeholder="请输入密码"
               maxlength="128"
@@ -207,15 +211,16 @@ async function handleSubmit() {
               @input="clearError"
             />
           </div>
-        </template>
+        </div>
 
         <!-- Invite code mode -->
-        <template v-if="loginMode === 'invite_code'">
-          <div class="form-field">
-            <label for="login-invite-code">邀请码</label>
+        <div v-else key="invite_code">
+          <div class="ui-field">
+            <label class="ui-label" for="login-invite-code">邀请码</label>
             <input
               id="login-invite-code"
               v-model="inviteCode"
+              class="ui-input code-input"
               type="text"
               placeholder="请输入 8 位邀请码"
               maxlength="8"
@@ -224,226 +229,102 @@ async function handleSubmit() {
               @input="clearError"
             />
           </div>
-        </template>
+        </div>
+      </Transition>
 
-        <!-- Submit -->
-        <button
-          type="submit"
-          class="submit-btn"
-          :disabled="loading"
-          :aria-busy="loading"
-        >
-          <span v-if="loading" class="spinner"></span>
-          {{ loading ? '登录中…' : '登录' }}
-        </button>
-      </form>
+      <!-- Submit -->
+      <button
+        type="submit"
+        class="ui-btn ui-btn--primary ui-btn--block submit-btn"
+        :disabled="loading"
+        :aria-busy="loading"
+      >
+        <span v-if="loading" class="ui-spinner"></span>
+        {{ loading ? '登录中…' : '登录' }}
+      </button>
+    </form>
 
-      <div class="login-links">
-        <router-link to="/register" class="login-link">没有账号？注册</router-link>
-        <router-link to="/reset-password" class="login-link">忘记密码？</router-link>
-      </div>
-    </div>
-  </div>
+    <template #footer>
+      <router-link to="/register">没有账号？注册</router-link>
+      <router-link to="/reset-password">忘记密码？</router-link>
+    </template>
+  </AuthShell>
 </template>
 
 <style scoped>
-.login-page {
-  min-height: 100dvh;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-6) var(--spacing-4);
-  background: var(--color-surface-base);
-}
-
-.login-card {
-  width: 100%;
-  max-width: 400px;
-  background: var(--color-surface-raised);
-  border-radius: var(--rounded-lg);
-  padding: var(--spacing-8);
-  box-shadow: var(--shadow-md);
-}
-
-.login-title {
-  font-family: 'Barlow Condensed', system-ui, sans-serif;
-  font-size: 36px;
-  font-weight: 600;
-  color: var(--color-primary);
-  text-align: center;
-  margin-bottom: var(--spacing-6);
-}
-
 .tab-bar {
+  position: relative;
   display: flex;
-  gap: var(--spacing-1);
   margin-bottom: var(--spacing-5);
-  background: var(--color-surface-base);
-  border-radius: var(--rounded-md);
   padding: 4px;
+  border-radius: var(--rounded-md);
+  background: var(--color-surface-sunken);
+}
+
+/* Sliding pill behind the active tab */
+.tab-thumb {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px) / var(--tab-count));
+  border-radius: var(--rounded-sm);
+  background: var(--color-surface-raised);
+  box-shadow: 0 2px 8px -2px rgba(13, 58, 31, 0.2);
+  transform: translateX(calc(var(--tab-index) * 100%));
+  transition: transform var(--duration-slow) var(--ease-out);
 }
 
 .tab-btn {
+  position: relative;
   flex: 1;
-  padding: var(--spacing-2) var(--spacing-2);
+  min-height: 40px;
+  padding: var(--spacing-2);
   font-size: 14px;
   font-weight: 600;
-  border: none;
   border-radius: var(--rounded-sm);
-  cursor: pointer;
-  background: transparent;
-  color: var(--color-ink-secondary);
-  transition: all 0.15s;
   white-space: nowrap;
-  min-height: 44px;
+  color: var(--color-ink-secondary);
+  transition: color var(--duration-base) ease;
+}
+
+.tab-btn:hover:not(.active) {
+  color: var(--color-ink-primary);
 }
 
 .tab-btn.active {
-  background: var(--color-surface-raised);
   color: var(--color-primary);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-.tab-btn:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-.form-field {
-  margin-bottom: var(--spacing-5);
-}
-
-.form-field label {
-  display: block;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-ink-primary);
-  margin-bottom: var(--spacing-2);
-}
-
-.form-field input {
-  width: 100%;
-  padding: var(--spacing-3) var(--spacing-3);
-  font-size: 16px;
-  color: var(--color-ink-primary);
-  background: var(--color-surface-base);
-  border: 1px solid var(--color-border-hairline);
-  border-radius: var(--rounded-md);
-  outline: none;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-  min-height: 44px;
-}
-
-.form-field input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 25%, transparent);
-}
-
-.form-field input[aria-invalid="true"] {
-  border-color: var(--color-destructive);
-}
-
-.error-banner {
-  background: var(--color-destructive-light);
-  color: var(--color-destructive);
-  padding: var(--spacing-3);
-  border-radius: var(--rounded-md);
-  font-size: 14px;
-  margin-bottom: var(--spacing-4);
-  text-align: center;
-}
-
-.success-banner {
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-  padding: var(--spacing-3);
-  border-radius: var(--rounded-md);
-  font-size: 14px;
-  margin-bottom: var(--spacing-4);
-  text-align: center;
+.code-input {
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
 }
 
 .submit-btn {
-  width: 100%;
-  padding: 12px;
-  font-size: 16px;
-  font-weight: 600;
-  color: #ffffff;
-  background: var(--color-primary);
-  border: none;
-  border-radius: var(--rounded-md);
-  cursor: pointer;
-  transition: background 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-2);
-  min-height: 44px;
+  margin-top: var(--spacing-2);
+  min-height: 48px;
 }
 
-.submit-btn:hover:not(:disabled) {
-  background: var(--color-primary-light);
+.mode-swap-enter-active,
+.mode-swap-leave-active {
+  transition: opacity var(--duration-fast) ease, transform var(--duration-base) var(--ease-out);
 }
 
-.submit-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.mode-swap-enter-from {
+  opacity: 0;
+  transform: translateX(12px);
 }
 
-.submit-btn:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #ffffff;
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.login-links {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--spacing-2);
-  margin-top: var(--spacing-5);
-}
-
-.login-link {
-  font-size: 14px;
-  color: var(--color-primary);
-  font-weight: 600;
-  text-decoration: none;
-  padding: var(--spacing-1) 0;
-  text-align: center;
-  transition: opacity var(--transition-fast);
-}
-
-.login-link:hover {
-  text-decoration: underline;
-  opacity: 0.85;
+.mode-swap-leave-to {
+  opacity: 0;
+  transform: translateX(-12px);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
-  .form-field input {
-    transition: none;
-  }
-  .submit-btn {
-    transition: none;
-  }
-  .tab-btn {
+  .tab-thumb {
     transition: none;
   }
 }

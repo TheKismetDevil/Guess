@@ -82,7 +82,9 @@ watch(
           :disabled="disabled"
           @click="enterEdit"
         >
-          ✎
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+          </svg>
         </button>
       </div>
     </template>
@@ -108,7 +110,7 @@ watch(
   font-family: var(--font-display, 'Barlow Condensed', system-ui, sans-serif);
   font-size: var(--text-heading, 24px);
   font-weight: 600;
-  color: var(--color-ink-primary, #1A2E1A);
+  color: inherit;
   margin: 0;
   line-height: 1.25;
   word-break: break-word;
@@ -122,11 +124,13 @@ watch(
 
 .edit-btn {
   position: absolute;
-  top: 0;
+  top: 6px;
   right: 0;
   background: transparent;
   border: none;
-  color: var(--color-primary, #1A5632);
+  color: inherit;
+  opacity: 0.75;
+  transition: opacity var(--duration-fast) ease, background var(--duration-fast) ease, transform var(--duration-fast) var(--ease-spring);
   font-size: var(--text-body, 16px);
   cursor: pointer;
   padding: 4px;
@@ -136,7 +140,15 @@ watch(
 }
 
 .edit-btn:hover:not(:disabled) {
-  background: var(--color-surface-base, #F8FAF7);
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.14);
+  transform: rotate(-12deg) scale(1.1);
+}
+
+.edit-btn svg {
+  display: block;
+  width: 18px;
+  height: 18px;
 }
 
 .edit-btn:disabled {
@@ -163,7 +175,7 @@ watch(
 }
 
 .edit-input:focus {
-  outline: 2px solid var(--color-primary, #1A5632);
+  outline: 2px solid var(--color-accent-light, #D4B84A);
   outline-offset: 2px;
 }
 

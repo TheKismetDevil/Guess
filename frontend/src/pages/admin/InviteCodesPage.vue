@@ -4,7 +4,12 @@ import InviteCodeTable from '@/components/InviteCodeTable.vue'
 
 <template>
   <div class="invite-codes-page">
-    <h1 class="page-title">用户管理</h1>
+    <header class="ui-page-header">
+      <div>
+        <span class="ui-page-eyebrow">Admin</span>
+        <h1 class="ui-page-title">用户管理</h1>
+      </div>
+    </header>
     <p class="page-description">
       邀请码是用户注册的唯一凭证。生成时需要绑定 QQ 号，用户注册时需提供匹配的 QQ 号和邀请码。
       已绑定的邀请码可点击「删除」同时移除用户和其投票记录。
@@ -15,18 +20,11 @@ import InviteCodeTable from '@/components/InviteCodeTable.vue'
 
 <style scoped>
 .invite-codes-page {
-  padding: var(--spacing-4, 16px);
+  padding: var(--spacing-5, 20px) var(--spacing-4, 16px);
   max-width: 1280px;
   margin: 0 auto;
 }
 
-.page-title {
-  font-family: 'Barlow Condensed', system-ui, sans-serif;
-  font-size: var(--text-heading, 24px);
-  font-weight: 600;
-  color: var(--color-primary, #1A5632);
-  margin: 0 0 var(--spacing-4, 16px);
-}
 
 .page-description {
   font-size: var(--text-body-sm, 14px);
