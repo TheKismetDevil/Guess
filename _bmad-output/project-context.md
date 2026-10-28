@@ -56,9 +56,9 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **PageState 枚举模式**：列表页面使用 `type PageState = 'loading' | 'empty' | 'error' | 'success'`，搜索/下拉组件可使用扩展版 `'idle' | 'loading' | 'empty' | 'error' | 'success'`（`idle` 表示初始未搜索状态，下拉隐藏）。骨架屏显示 loading 态，精确微文案显示 empty 态，"加载失败，请刷新重试"+刷新按钮显示 error 态。
 - `RaceCard.vue` 支持 `skeleton` prop，未来故事可直接使用 `<RaceCard skeleton />` 渲染骨架屏。
 - `HorseSearchSelect.vue` 使用 `defineModel<Horse[]>('selectedHorses')` 实现 v-model 双向绑定 — 新增组件应优先使用 `defineModel` 替代手动 `emit('update:...')` 模式。
-- `HorseDetailCard.vue` 用于展示马匹 10 属性快照数据，接收 `snapshotData` prop（可空，通过 `withDefaults` 提供默认值）。新增 `votable`、`voted`、`submitting` 三个 props 支持点击投票交互：`votable` 时显示 `cursor: pointer` + hover 高亮，`voted` 时显示金色边框 + "✓ 已投"徽章。emit `voteToggle` 事件供父组件处理投票逻辑。移动端 (<768px) 使用独立于桌面端表格的四行 flex 布局（`.mobile-card-layout`），四行依次为：骑手/属地、父/母父、前走、主胜鞍。通过 `.desktop-table`/`.mobile-card-layout` 配合媒体查询切换。移动端添加 `touch-action: manipulation; -webkit-touch-callout: none; user-select: none;` 禁用长按文本选择。
-- `HorseDetailCard.vue` 新增 `refresh` emit 事件 + 刷新按钮（↻图标，仅 `editable` 为 true 时显示）+ 确认弹窗（Teleport to body）。点击刷新按钮 → 弹窗确认 → emit `refresh` 事件，父组件调用 `refreshRaceHorseSnapshot` API 并重新加载数据。
-- `StatusBadge.vue` 用于展示比赛状态胶囊：voting（绿底#2D7A4F）、locked（灰底#6B7280 + 🔒）、settled（深绿底#0D3A1F + ✓）。接收 `status: string` prop。
+- `HorseDetailCard.vue` 用于展示马匹快照数据（马柱卡片），接收 `snapshotData` prop（可空，通过 `withDefaults` 提供默认值）。**桌面与移动端共用同一套响应式布局**（不再是隐藏的 `<table>` + 单独的移动端四行布局）：左侧主徽章（有名次时显示名次「N着」金/银/铜，否则显示闸位号，传 `fieldSize` 时用 JRA 枠色）；中间名字行（拖拽手柄、马名、名次模式下的闸位小色块、性龄 chip、所属地）+ 两列对齐的事实区（骑手 / 血统「父 × 母父」/ 前走 / 主胜），前走名次从文本里拆成彩色 chip（1-3 着金银铜、4-5 着绿、除外红）；右侧为投票 pill（「选它」/「✓ 已投」，可悬停设备上悬停显示「取消」）和管理员图标按钮。投票 pill 只是视觉提示（`aria-hidden`），整张卡片仍是 `role="button"`。移动端事实区单列且允许换行，并保留 `touch-action: manipulation; -webkit-touch-callout: none; user-select: none;`。
+- `HorseDetailCard.vue` 的管理员操作（仅 `editable` 时显示，位于卡片右侧）：↻ 刷新按钮 → 确认弹窗（Teleport to body）→ emit `refresh`；🗑 移除按钮（`desktop-only`，emit `deleteClick`，移动端仍用抖动模式角标 ✕）。骑手可通过 ✎ 按钮、桌面双击或移动端点击进入内联编辑，输入框通过模板 ref 聚焦（旧实现用 `document.querySelector('.inline-input')`，移动端会聚焦到隐藏的桌面输入框）。
+- `StatusBadge.vue` 用于展示比赛状态胶囊：voting（品牌绿渐变 + 呼吸圆点）、locked（灰底 `--color-ink-muted` + SVG 锁）、settled（深绿底 + SVG 勾）。接收 `status: string` prop。
 - `ConfirmDeleteModal.vue` 可复用确认弹窗组件（不仅限删除），接收 `title`, `itemName`, `message`, `loading`, `confirmText`（默认"确认删除"）, `loadingText`（默认"删除中…"） props，emit `confirm` / `cancel`。使用 `<Teleport to="body">` + `role="dialog"` + `aria-modal` + Esc 关闭 + 遮罩层点击关闭。不可点击遮罩层外部关闭（防误触）。`RaceDetailPage.vue` 中锁定比赛也复用此组件，传入 `confirm-text="确认锁定"` `loading-text="锁定中…"`。
 - `HomePage.vue` 中弹窗选"自定义"等级时显示正序积分列表和扣分规则输入框，创建比赛时附带 `custom_scoring` 字段。创建比赛弹窗（`.modal-backdrop`）不可点击遮罩层外部关闭（无 `@click.self`），仅能通过"取消"按钮关闭。radio 单选框 CSS 使用 `clip: rect(0,0,0,0)` 而非 `width:0;height:0`，避免点击 `<label>` 不触发 v-model 更新。`HorseDetailCard.vue` 的 `<table>` 内 `<tr>` 必须包在 `<tbody>` 中。`RaceHeaderEditor` 只编辑比赛名称，日期在详情页 `race-subinfo` 中双击编辑。
 - `HorsesPage.vue`（马匹管理页）添加/编辑马匹弹窗使用 `<Teleport to="body">` + `.modal-overlay`，不可点击遮罩层外部关闭（无 `@click.self`），仅能通过"取消"按钮关闭。
@@ -87,7 +87,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **RouteMeta must be extended** for custom meta fields used in guards: add `declare module 'vue-router' { interface RouteMeta { requiresAuth?: boolean; isAdmin?: boolean } }` in router/index.ts. This avoids `as Record<string, unknown>` type assertions.
 - Guest page name list (`guestPageNames: string[]`) extracted to module-level constant in router/index.ts — NOT defined inside beforeEach.
 - `@` path alias configured in both `vite.config.ts` and `tsconfig.app.json` — use `@/pages/`, `@/components/`, etc.
-- Responsive navigation via `AppLayout` (global wrapper in `App.vue`): desktop top nav (≥768px, green bg, `position: fixed`) and mobile bottom nav (<768px, with SVG icons + text). On desktop, a `.scroll-container` (`position: fixed; top: var(--header-height); left: 0; right: 0; bottom: 0; overflow-y: auto`) handles scrolling below the fixed header, preventing scrollbar-induced horizontal layout shift. Admin users see a "管理" dropdown trigger in both navs. Admin pages share the same AppLayout — no separate layout wrapping.
+- Responsive navigation via `AppLayout` (rendered by `App.vue`; **AppLayout owns the `<RouterView>`**): desktop top nav (≥768px, `--gradient-brand` bg + gold bottom line, `position: fixed`, gains a shadow once `.scroll-container` scrolls) and mobile bottom nav (<768px, frosted glass, active item gets a pill behind the icon). On desktop, a `.scroll-container` (`position: fixed; top: var(--header-height); left: 0; right: 0; bottom: 0; overflow-y: auto`) handles scrolling below the fixed header, preventing scrollbar-induced horizontal layout shift. Page changes go through `<Transition name="page" mode="out-in">` keyed by `route.path` (so `/races/1` → `/races/2` remounts) and `@before-enter` resets the scroll container to the top. The page transition is **opacity-only** — a transform on the page root would become the containing block for the page's `position: fixed` FAB / scroll hints. Admin users see a "管理" dropdown trigger in both navs. Admin pages share the same AppLayout — no separate layout wrapping.
 - `safe-area-inset-bottom` applied via `viewport-fit=cover` meta + CSS `env(safe-area-inset-bottom)` — always add to mobile fixed elements
 - `prefers-reduced-motion: reduce` respected globally in `base.css` — overrides all animations/transitions. 全局 `scroll-behavior: smooth` 也被覆盖为 `auto`。
 - `*:focus-visible` 全局统一样式在 `base.css` 中定义（2px 竞马绿 outline + 2px offset），所有可聚焦元素自动继承。组件内如需自定义 focus 样式，使用 scoped CSS 覆盖。
@@ -257,7 +257,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - 100% 分支覆盖要求：测试必须覆盖 4 种等级的所有边界组合，包括 G1 的 4 种匹数分档（≥8/7/6/≤5）。
 
 **Frontend patterns:**
-- 管理后台 CRUD 页面使用 `<Teleport to="body">` 模态框进行创建/编辑操作，搜索框使用 300ms 防抖（`watch(search, debouncedSearch)` + `setTimeout`）。
+- 管理后台 CRUD 页面使用 `<Teleport to="body">` 模态框进行创建/编辑操作，搜索框使用 300ms 防抖（`watch(search, debouncedSearch)` + `setTimeout`）。**搜索不能把页面切回 loading 态**——那会卸载搜索框导致输入中途失焦，空结果还会被当成「库为空」并丢失搜索框；改为 `loadXxx({ quiet: true })` 只置 `searching`，保留列表并降低透明度，空结果显示「没有找到…」+ 清空搜索。删除一律用 `ConfirmDeleteModal`，不用原生 `confirm()`；删除失败用页内横幅提示（`showNotice`），不要写进只在 error 态渲染的 `errorMessage`。列表在 <768px 时把 `<table>` 行转成卡片（`td[data-label]::before` 显示列名），不再横向滚动。
 - **PATCH 编辑模式的关键模式**：`handleSave` 在编辑时必须按字段逐一比较当前值与原始值的差异，**仅发送变更的字段**，而非发送所有字段为 `null`。否则后端 `exclude_unset=True` 无法区分"用户未修改"和"用户将某字段清空为 null"——发送 `null` 会覆盖数据库中的已有值。参考实现：`frontend/src/pages/admin/HorsesPage.vue` 中的 `handleSave`。
 - 新建数据后不推荐 `unshift`，应 `push` 后按显示顺序 `sort()` 避免与后端排序不一致导致的视觉跳跃。
 - **HorseSearchSelect 点击即选模式**：搜索下拉选中马匹后立即关闭下拉框并清空搜索词（`showDropdown = false` + `searchText = ''`），而非在下拉框中打钩多选。点击行为为**追加模式**（`selectedHorses = [...selectedHorses, horse]`），已选马匹不会重复添加。通过上方 tag 展示已选列表，配合父组件的"添加"按钮一次性提交。
@@ -275,7 +275,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 
 **VoteButton 状态机（Story 3.3）已迁移为卡片点击投票模式：**
 - `VoteButton.vue` 已被移除，改为 `HorseDetailCard.vue` 直接支持点击投票
-- `HorseDetailCard.vue` 新增 `votable`、`voted`、`submitting` props：`votable` 时显示 `cursor: pointer` + hover 高亮效果；`voted` 时显示金色边框 + "✓ 已投"徽章；`submitting` 时禁用点击
+- `HorseDetailCard.vue` 新增 `votable`、`voted`、`submitting` props：`votable` 时显示 `cursor: pointer` + hover 上浮、右侧「选它」pill；`voted` 时显示金色边框 + 光晕 + 扫光动画，pill 变为金色「✓ 已投」；`submitting` 时 pill 显示 spinner 并禁用点击
 - 移动端不再有固定底部投票栏（`position: fixed; bottom: 0`）——投票交互直接在卡片上进行
 - 锁定/已结算状态：通过 `.voted-horse-locked` CSS 类（金色边框）在 HorseDetailCard 上高亮用户投中的马匹
 
@@ -292,14 +292,14 @@ _This file contains critical rules and patterns that AI agents must follow when 
 **RaceDetailPage 投票集成模式（Story 3.3）：**
 - **移除** VoteButton、HorseSelectCard 引用；**移除** 选择模式（`selection-section`）、**移除** 底部投票栏（`vote-bar`）
 - 比赛详情页中的赛马卡片（HorseDetailCard）直接可点击投票——点击卡片 = 投票/取消/切换
-- 游客点击卡片 → 跳转登录页；管理员不可投票
+- 游客点击卡片 → 跳转登录页；管理员不可投票。为此 `cardsVotable = isRaceVoting && !isAdmin`（**包含游客**），由 `handleCardClick` 判断未登录时跳转——旧条件里多了 `isLoggedIn`，导致游客点击毫无反应。
 - 新增投票提示条（`vote-hint`）：引导用户操作
-- VotingDetail 组件使用 Chart.js Doughnut 饼图展示投票分布，按马匹分组显示票数占比。悬停 tooltip 显示票数/百分比和投票人名单。已结算比赛通过 `horsePositions` prop 传入冠军信息，冠军马扇区显示金色边框 + 🏆 图标 + 弹出偏移。所有比赛状态（voting/locked/settled）均显示投票分布。刷新策略：仅在页面加载和投票成功后刷新，无轮询。依赖：`chart.js ^4.5.1` + `vue-chartjs ^5.3.3`。
+- VotingDetail 组件使用 Chart.js Doughnut 环形图展示投票分布：马匹按票数降序排列（图与图例同序同色），环心显示总票数（count-up），Chart.js 自带 legend 关闭，改为自定义图例列表（色块 + 票数/占比 + 增长进度条 + 投票人名单），悬停图例行会联动高亮对应扇区。悬停扇区 tooltip 显示票数/百分比和投票人名单。已结算比赛通过 `horsePositions` prop 传入冠军信息，冠军马扇区显示金色边框 + 偏移，图例显示「🏆 冠军」。所有比赛状态（voting/locked/settled）均显示投票分布。刷新策略：仅在页面加载和投票成功后刷新，无轮询。依赖：`chart.js ^4.5.1` + `vue-chartjs ^5.3.3`（只注册 ArcElement + Tooltip）。
 - HorseSelectCard 已被删除，无单选组需求——每张卡片独立可点击
 
 **HomePage 首场比赛列表投票状态模式：**
 - **移除**"投票"按钮（原金色 `vote-entry` CSS 类）
-- **新增** `vote-status` 徽章，仅在 voting 状态 + 已登录时显示用户的投票状态："未投票"（灰底灰框）/"已投票"（绿底绿框）
+- **新增** `vote-status` 徽章，仅在 voting 状态 + 已登录时显示用户的投票状态："未投票"（浅金底 + 呼吸圆点提醒）/"已投票"（浅绿底 + SVG 勾）
 - 未登录用户不显示任何投票标记
 
 **结果录入与结算模式（Story 3.4）：**
@@ -326,7 +326,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **Leaderboard 聚合查询模式**：`leaderboard_service.get_leaderboard()` 使用 `OUTER JOIN votes ON (user.id = vote.user_id AND vote.points IS NOT NULL)` 确保所有用户（含 0 参与用户）出现。聚合列：`COALESCE(SUM(vote.points), 0)` 为 total_points、`COUNT(DISTINCT vote.race_id)` 为 races_participated、`ROUND(CAST(sum / divisor AS NUMERIC), 1)` 为 avg_points。**重要：PostgreSQL 的 `round(numeric, integer)` 要求第一个参数为 `NUMERIC` 类型，`double precision` 会导致 `function round(double precision, integer) does not exist` 错误。必须通过 `sa.cast(expression, Numeric)` 显式转换为 NUMERIC。** 排序：`total_points DESC, avg_points DESC`。Python 层对 NULL avg 做 `float(row.avg_points or 0.0)` 处理。
 - **Leaderboard 筛选子查询模式**：支持按 6 个 tag 筛选（age_range/sex_restriction/race_grade/country/surface 为多选），以及 distance、horse_count 范围筛选。**CRITICAL**：筛选条件**不能**放在 `Vote LEFT JOIN Race` 的 ON 子句中——LEFT JOIN 保留所有 Vote 行，不匹配的 Race 导致 Race 列为 NULL 但 Vote.points 仍参与 SUM。正确做法：有筛选时构建 `Vote INNER JOIN Race WHERE {filters}` 子查询，无筛选时用 `Vote WHERE points IS NOT NULL` 简版子查询，然后 `User LEFT JOIN subquery ON user_id`。未命中筛选的用户仍以 0 分显示。
 - **Leaderboard 公开端点模式**：`GET /api/v1/leaderboard` 无认证依赖（FR-23 要求公开访问），路由前缀 `/api/v1`。前端 `apiClient.get('/leaderboard')` 因 baseURL 为 `/api/v1` 正确匹配。
-- **LeaderboardRow 组件模式**：`LeaderboardRow.vue` 使用原生 `<tr>`/`<td>`（非 div+flex 模拟），接收 `entry: LeaderboardEntry`, `rank: number`, `isCurrentUser: boolean` props。rank 使用 Barlow Condensed 18px bold，前三名使用 `--color-accent` 金色（`color: var(--color-accent, #B8960C)`），其余用 `--color-ink-primary`。积分使用 Barlow Condensed 20px bold `--color-primary`。当前用户行使用 `background: #F0F7F2`。场次/场均使用 body-sm 14px `--color-ink-secondary`。row 使用 `aria-label="{rank}名 {username} {points}分"`。
+- **LeaderboardRow 组件模式**：`LeaderboardRow.vue` 使用原生 `<tr>`/`<td>`（非 div+flex 模拟），接收 `entry: LeaderboardEntry`, `rank: number`, `isCurrentUser: boolean` props。排名用圆形 pill（前三名金色渐变），用户名前有首字头像（移动端隐藏），积分 Barlow Condensed 22px（负分红色），当前用户行 `--color-primary-tint` 底 + 左侧 3px 竞马绿描边 + 「我」标签。row 使用 `aria-label="第{rank}名，{username}，{points}分"`。**排行榜前三名改由 `LeaderboardPodium.vue` 领奖台展示（2-1-3 排列、台阶自下而上生长、积分 count-up），表格只渲染第 4 名起。**
 - **LeaderboardPage 模式**：`LeaderboardPage.vue` 使用 PageState 枚举（loading/empty/error/success）。success 态渲染原生 `<table>`（`<thead>`+`<th scope="col">`+`<tbody>`+`LeaderboardRow` as `<tr>`）。useDragSort composable 外的结构化表格数据优先使用原生 `<table>` 保证列对齐（与 DashboardPage、HorsesPage 一致）。empty 态条件：`data.length === 0 || data.every(e => e.races_participated === 0)`。
 - **LeaderboardPage 筛选交互模式**：多选标签和数字范围输入修改后**不立即触发 API**——用户选完所有条件后点击绿色实心"应用筛选"按钮一次性提交。"清除筛选"按钮立即生效。`v-model.number` 清空后产生空字符串 `""` → 使用 `toNum()` 辅助函数（`typeof v === 'number' && !isNaN(v) ? v : undefined`）过滤为非数字值。`hasActiveFilters()` 必须检查所有 7 个筛选维度（6 个 tag 数组 + 4 个数字范围），确保 surface 等维度不遗漏。
 - **排行榜排除 admin 模式**：`leaderboard_service.get_leaderboard()` 查询中添加 `.where(User.is_admin == False)` 过滤 admin 用户。admin 不能投票，无有效积分，不应出现在排行榜中。
@@ -379,6 +379,21 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - 保存后通过 `refreshCountryList()` 从后端重新拉取统计数据。
 - `POST /api/v1/horses/origins/{origin}/toggle-hemisphere` 端点用于翻转所有同产地马匹的半球（north↔south），前端在半球标签旁显示"切换半球"按钮。
 
+**UI 动效与共享原语（frontend lively-ui 重构）：**
+- 设计令牌（`variables.css`）新增：tint 色（`--color-primary-tint` / `--color-accent-tint` / `--color-destructive-tint` 等，替代散落的 `#F0F7F2`、`#FFFDF0`、`#FFF5F5`）、渐变（`--gradient-brand` / `--gradient-gold` / `--gradient-silver` / `--gradient-bronze`）、`--shadow-lg` / `--shadow-xl` / `--shadow-glow-gold`、`--rounded-xl`，以及动效令牌 `--ease-out` / `--ease-spring` / `--ease-in-out`、`--duration-fast|base|slow`、`--stagger-step`。新代码优先用令牌，不要再写裸色值。
+- 共享关键帧集中在 `base.css`：`rise-in`、`fade-in`、`pop-in`、`dialog-in`、`shake-x`、`pulse-ring`、`spin`（加上原有 `skeleton-shimmer`）。组件内不要重复定义同名动画。
+- `assets/styles/ui.css` 提供 **`ui-` 前缀**的全局原语：`ui-btn`（`--primary` / `--gold` / `--ghost` / `--outline` / `--danger` / `--danger-solid` / `--sm` / `--block`）、`ui-spinner`、`ui-page-header` + `ui-page-eyebrow` + `ui-page-title` + `ui-page-subtitle`、`ui-field` / `ui-label` / `ui-input` / `ui-field-error`、`ui-banner--error|success`（错误横幅自带抖动）、`ui-chip`、`ui-skeleton`、`ui-state`（空/错误态，含 `ui-state-icon` / `ui-state-text`）、弹窗入场 `ui-anim-overlay` + `ui-anim-dialog`、过渡名 `ui-fade` / `ui-collapse`。前缀是为了不和管理页里仍然 scoped 的 `.btn` / `.form-field` 冲突。
+- **列表逐项入场**：给条目加 `.ui-stagger` + `:style="{ '--i': index }"`，但 class 只能在首次出现时挂上——用 `useRevealOnce()` 的 `revealing` 控制（`reveal(count)` 后自动在动画结束时撤掉）。原因：CSS 动画在节点被重新插入时会重播，常驻 class 会让拖拽排序（DOM 移动）时卡片反复闪入。
+- `useCountUp(source, duration)` / `CountUpNumber.vue`：数字缓动递增，`prefers-reduced-motion` 时直接跳到终值。
+- `base.css` 的 reduced-motion 全局规则同时把 `animation-delay` / `transition-delay` 置 0，避免逐项入场在关闭动效时仍有延迟空白。
+- 复用组件：`RaceTags.vue`（6 个标签 chip；G1 金、G2 银、G3 铜、JPN 青、自定义紫，场地带色点；`on-dark` 用于详情页深色横幅）、`HiddenToggleButton.vue`（管理员眼睛按钮，内部 `@click.stop`）、`BrandMark.vue`（金色马蹄铁 logo，渐变 id 用 `useId()` 保证每个实例唯一）、`AuthShell.vue`（登录/注册/重置密码共用外壳，表单控件用 `ui-*`）。
+- 选项常量统一在 `src/constants/raceOptions.ts`（`AGE_RANGE_OPTIONS` 等），首页创建弹窗与排行榜筛选共用，新增选项只改这一处。
+- 比赛详情页顶部为品牌色横幅（`.race-hero`，按状态切换配色），`RaceHeaderEditor` 的标题与 ✎ 按钮颜色为 `inherit` 以适配深色背景。
+- `HorseDetailCard.vue` 新增可选 `fieldSize` prop：传入出走头数时右侧闸位块按 **JRA 枠番配色**（`utils/gateBracket.ts`，≤8 头一马一枠，9–18 头按外枠优先补位）。详情页只对 `country === '日本'` 的比赛传入。左侧名次块 1/2/3 名为金/银/铜渐变。
+- `HorseDetailCard.vue` 模板是双根（卡片 + Teleport），因此 `inheritAttrs: false` 并在卡片根上 `v-bind="$attrs"`；父组件传入的 class（如 `voted-horse-locked`）的样式写在 HorseDetailCard 自己的 scoped CSS 里（父组件 scoped 选择器匹配不到多根组件的元素）。
+- 首页：状态分段筛选（全部/投票中/已锁定/已结算，纯前端过滤 `visibleRaces`），比赛卡片左侧日历块 + 状态色条，悬停上浮；卡片外层 `role="link"` + `tabindex="0"` + Enter 跳转。
+- 移动端底部导航高度包含 `env(safe-area-inset-bottom)`，`.scroll-container` 的 `bottom` 也同步加上，避免 iPhone 上导航内容被压扁。
+
 ---
 
 ## Usage Guidelines
@@ -395,4 +410,4 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Review quarterly for outdated rules
 - Remove rules that become obvious over time
 
-Last Updated: 2026-07-10 (fix leaderboard filter: corrected subquery pattern + paramsSerializer + scrollbar-gutter + filter UX button)
+Last Updated: 2026-10-15 (frontend lively-ui refactor: motion tokens, ui-* primitives, page transitions, podium, hero banner, JRA bracket colours)

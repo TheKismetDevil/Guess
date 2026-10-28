@@ -10,19 +10,29 @@
   --color-primary: #1A5632;            /* 竞马绿 — 主品牌色 */
   --color-primary-light: #2D7A4F;      /* 亮绿 — 2岁G1 徽章、success */
   --color-primary-dark: #0D3A1F;       /* 深绿 — 已结算状态 */
+  --color-primary-tint: #EDF5EF;       /* 极浅绿 — 选中底色、当前用户行 */
+  --color-primary-tint-strong: #D7EADC; /* 浅绿 — hover 底色 */
 
   /* Accent */
   --color-accent: #B8960C;             /* 冠军金 — CTA + G1 徽章 */
   --color-accent-light: #D4B84A;       /* 亮金 — hover */
+  --color-accent-dark: #8F7406;        /* 暗金 — 金色按钮 hover */
+  --color-accent-tint: #FFF8E1;        /* 极浅金 — 已投票卡片底色 */
+
+  /* Medals — 名次徽章 */
+  --color-silver: #8E9AA6;
+  --color-bronze: #B0713B;
 
   /* Surfaces */
   --color-surface-base: #F8FAF7;       /* 暖白 — 页面底色 */
   --color-surface-raised: #FFFFFF;     /* 纯白 — 卡片/浮层 */
+  --color-surface-sunken: #F1F5F0;     /* 凹陷 — 表头、标签底色 */
 
   /* Text */
   --color-ink-primary: #1A2E1A;        /* 墨绿黑 — 正文 */
   --color-ink-secondary: #4A5A4A;      /* 中灰绿 — 辅助文字 */
   --color-ink-disabled: #9CAA9C;       /* 禁用文字 */
+  --color-ink-muted: #6B7280;          /* 中性灰 — 锁定状态、弃权区 */
 
   /* Borders */
   --color-border-hairline: #D4DCD0;    /* 细线 — 分隔线、卡片边框 */
@@ -31,7 +41,16 @@
   /* Semantic */
   --color-success: #2D7A4F;            /* 成功 */
   --color-destructive: #C53030;        /* 红色 — 错误、删除 */
+  --color-destructive-dark: #9B2C2C;   /* 深红 — 删除 hover */
   --color-destructive-light: #FED7D7;  /* 浅红 — 错误背景 */
+  --color-destructive-tint: #FFF5F5;   /* 极浅红 — 危险按钮 hover 底色 */
+
+  /* Gradients */
+  --gradient-brand: linear-gradient(135deg, #0D3A1F 0%, #1A5632 48%, #2D7A4F 100%);
+  --gradient-brand-soft: linear-gradient(135deg, #1A5632 0%, #2D7A4F 100%);
+  --gradient-gold: linear-gradient(135deg, #E2C55A 0%, #B8960C 60%, #9C7E08 100%);
+  --gradient-silver: linear-gradient(135deg, #C9D1D9 0%, #8E9AA6 100%);
+  --gradient-bronze: linear-gradient(135deg, #D79A63 0%, #A2622D 100%);
 
   /* =========================================
      Typography
@@ -71,6 +90,7 @@
   --rounded-sm: 6px;
   --rounded-md: 10px;
   --rounded-lg: 14px;
+  --rounded-xl: 20px;
   --rounded-full: 9999px;
 
   /* =========================================
@@ -87,10 +107,21 @@
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 2px 4px rgba(26, 86, 50, 0.08);
+  --shadow-lg: 0 12px 28px -12px rgba(13, 58, 31, 0.28), 0 2px 6px rgba(13, 58, 31, 0.06);
+  --shadow-xl: 0 24px 48px -16px rgba(13, 58, 31, 0.35);
+  --shadow-glow-gold: 0 0 0 3px rgba(184, 150, 12, 0.22), 0 8px 24px -10px rgba(184, 150, 12, 0.55);
 
   /* =========================================
-     Transitions
+     Motion
      ========================================= */
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);        /* 快出缓停 — 入场、位移 */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);     /* 对称 — 往返切换 */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);  /* 轻微回弹 — 徽章、按压 */
+  --duration-fast: 150ms;
+  --duration-base: 240ms;
+  --duration-slow: 420ms;
+  --stagger-step: 45ms;                               /* 列表逐项入场间隔 */
 
   --transition-fast: 150ms ease;
 }

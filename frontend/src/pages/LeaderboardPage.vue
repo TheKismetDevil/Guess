@@ -1,26 +1,44 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
 import { getLeaderboard } from '@/api/leaderboard'
 import type { LeaderboardEntry, LeaderboardFilters } from '@/types/leaderboard'
 import LeaderboardRow from '@/components/LeaderboardRow.vue'
+import LeaderboardPodium from '@/components/LeaderboardPodium.vue'
+import { useRevealOnce } from '@/composables/useRevealOnce'
+import {
+  AGE_RANGE_OPTIONS,
+  SEX_RESTRICTION_OPTIONS,
+  RACE_GRADE_OPTIONS,
+  COUNTRY_OPTIONS,
+  SURFACE_OPTIONS,
+} from '@/constants/raceOptions'
 
 type PageState = 'loading' | 'empty' | 'error' | 'success'
+type TagField = 'age_range' | 'sex_restriction' | 'race_grade' | 'country' | 'surface'
+
+const PODIUM_SIZE = 3
 
 const authStore = useAuthStore()
 const pageState = ref<PageState>('loading')
 const leaderboard = ref<LeaderboardEntry[]>([])
 const errorMessage = ref('加载失败，请刷新重试')
 const refreshing = ref(false)
+const { revealing, reveal } = useRevealOnce()
+
+const podiumEntries = computed(() => leaderboard.value.slice(0, PODIUM_SIZE))
+const tableEntries = computed(() => leaderboard.value.slice(PODIUM_SIZE))
 
 // Filter state
 const filterOpen = ref(false)
 const filters = ref<LeaderboardFilters>({})
-const ageRangeOptions = ['2岁', '2+岁', '3岁', '3+岁', '4+岁', '其他']
-const sexRestrictionOptions = ['无', '牝限', '牡牝限', '牡限']
-const raceGradeOptions = ['G1', 'G2', 'G3', 'JPN1', 'JPN2', '其他', '自定义']
-const countryOptions = ['日本', '英国', '美国', '澳大利亚', '中国香港', '法国', '阿联酋', '爱尔兰', '沙特', '南非', '德国', '加拿大', '新西兰', '韩国', '阿根廷', '乌拉圭', '巴西', '智利', '秘鲁', '其他']
-const surfaceOptions = ['草地', '泥地', '全天候', '其他']
+const tagSections: { field: TagField; label: string; options: string[]; grid?: boolean }[] = [
+  { field: 'age_range', label: '年龄范围', options: AGE_RANGE_OPTIONS },
+  { field: 'sex_restriction', label: '性别限定', options: SEX_RESTRICTION_OPTIONS },
+  { field: 'race_grade', label: '比赛等级', options: RACE_GRADE_OPTIONS },
+  { field: 'country', label: '国家或地区', options: COUNTRY_OPTIONS, grid: true },
+  { field: 'surface', label: '场地', options: SURFACE_OPTIONS },
+]
 const distanceMin = ref<number | undefined>(undefined)
 const distanceMax = ref<number | undefined>(undefined)
 const horseCountMin = ref<number | undefined>(undefined)
@@ -36,7 +54,14 @@ function hasActiveFilters(): boolean {
   )
 }
 
-function toggleArrayField(field: 'age_range' | 'sex_restriction' | 'race_grade' | 'country' | 'surface', value: string) {
+const activeFilterCount = computed(() => {
+  const tagCount = tagSections.reduce((n, s) => n + (filters.value[s.field]?.length ?? 0), 0)
+  const rangeCount = [distanceMin, distanceMax, horseCountMin, horseCountMax]
+    .filter(r => toNum(r.value) !== undefined).length
+  return tagCount + rangeCount
+})
+
+function toggleArrayField(field: TagField, value: string) {
   const arr = filters.value[field]
   if (arr?.includes(value)) {
     filters.value[field] = arr.filter(v => v !== value)
@@ -65,6 +90,7 @@ async function loadData() {
     leaderboard.value = data
     const hasActivity = data.length > 0 && data.some(e => e.races_participated > 0)
     pageState.value = hasActivity ? 'success' : 'empty'
+    if (hasActivity) reveal(data.length)
   } catch (err) {
     console.error('Leaderboard load failed:', err)
     pageState.value = 'error'
@@ -95,98 +121,128 @@ onMounted(loadData)
 
 <template>
   <div class="leaderboard-page">
+    <header class="ui-page-header">
+      <div>
+        <span class="ui-page-eyebrow">Leaderboard</span>
+        <h1 class="ui-page-title">排行榜</h1>
+        <p class="ui-page-subtitle">积分在每次比赛结算后自动更新</p>
+      </div>
+      <button class="ui-btn ui-btn--ghost ui-btn--sm refresh-btn" :disabled="refreshing" @click="handleRefresh">
+        <svg class="refresh-icon" :class="{ spinning: refreshing }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+        </svg>
+        {{ refreshing ? '刷新中…' : '刷新' }}
+      </button>
+    </header>
+
     <!-- Filter bar -->
     <div class="filter-bar">
-      <button class="filter-toggle" @click="filterOpen = !filterOpen">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button
+        class="filter-toggle"
+        :class="{ open: filterOpen }"
+        :aria-expanded="filterOpen"
+        @click="filterOpen = !filterOpen"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <line x1="4" y1="6" x2="20" y2="6" /><line x1="8" y1="12" x2="20" y2="12" /><line x1="12" y1="18" x2="20" y2="18" />
         </svg>
         筛选
-        <span v-if="hasActiveFilters()" class="filter-badge"></span>
+        <span v-if="hasActiveFilters()" :key="activeFilterCount" class="filter-badge">{{ activeFilterCount }}</span>
+        <svg class="filter-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
       </button>
-      <button v-if="hasActiveFilters()" class="clear-btn" @click="clearFilters">清除筛选</button>
-      <button v-if="filterOpen || hasActiveFilters()" class="apply-btn" @click="applyFilters">应用筛选</button>
-      <button class="filter-toggle" @click="handleRefresh" :disabled="refreshing" style="margin-left:auto">
-        {{ refreshing ? '刷新中…' : '刷新' }}
-      </button>
+      <Transition name="ui-fade">
+        <button v-if="hasActiveFilters()" class="clear-btn" @click="clearFilters">清除筛选</button>
+      </Transition>
+      <Transition name="ui-fade">
+        <button v-if="filterOpen || hasActiveFilters()" class="ui-btn ui-btn--primary ui-btn--sm apply-btn" @click="applyFilters">应用筛选</button>
+      </Transition>
     </div>
 
     <!-- Filter panel -->
-    <div v-if="filterOpen" class="filter-panel">
-      <div class="filter-section">
-        <label class="filter-label">年龄范围</label>
-        <div class="filter-tags">
-          <button v-for="opt in ageRangeOptions" :key="opt" class="filter-tag" :class="{ active: filters.age_range?.includes(opt) }" @click="toggleArrayField('age_range', opt)">{{ opt }}</button>
+    <Transition name="ui-collapse">
+      <div v-if="filterOpen" class="filter-collapse">
+        <div class="filter-panel">
+          <div v-for="section in tagSections" :key="section.field" class="filter-section">
+            <label class="filter-label">{{ section.label }}</label>
+            <div class="filter-tags" :class="{ 'filter-grid': section.grid }">
+              <button
+                v-for="opt in section.options"
+                :key="opt"
+                class="filter-tag"
+                :class="{ active: filters[section.field]?.includes(opt) }"
+                :aria-pressed="!!filters[section.field]?.includes(opt)"
+                @click="toggleArrayField(section.field, opt)"
+              >{{ opt }}</button>
+            </div>
+          </div>
+          <div class="filter-section">
+            <label class="filter-label">长度范围（米）</label>
+            <div class="filter-range">
+              <input type="number" v-model.number="distanceMin" placeholder="最小" min="0" />
+              <span class="range-sep">—</span>
+              <input type="number" v-model.number="distanceMax" placeholder="最大" min="0" />
+            </div>
+          </div>
+          <div class="filter-section">
+            <label class="filter-label">马匹数量范围</label>
+            <div class="filter-range">
+              <input type="number" v-model.number="horseCountMin" placeholder="最少" min="0" />
+              <span class="range-sep">—</span>
+              <input type="number" v-model.number="horseCountMax" placeholder="最多" min="0" />
+            </div>
+          </div>
         </div>
       </div>
-      <div class="filter-section">
-        <label class="filter-label">性别限定</label>
-        <div class="filter-tags">
-          <button v-for="opt in sexRestrictionOptions" :key="opt" class="filter-tag" :class="{ active: filters.sex_restriction?.includes(opt) }" @click="toggleArrayField('sex_restriction', opt)">{{ opt }}</button>
-        </div>
-      </div>
-      <div class="filter-section">
-        <label class="filter-label">比赛等级</label>
-        <div class="filter-tags">
-          <button v-for="opt in raceGradeOptions" :key="opt" class="filter-tag" :class="{ active: filters.race_grade?.includes(opt) }" @click="toggleArrayField('race_grade', opt)">{{ opt }}</button>
-        </div>
-      </div>
-      <div class="filter-section">
-        <label class="filter-label">国家或地区</label>
-        <div class="filter-tags filter-grid">
-          <button v-for="opt in countryOptions" :key="opt" class="filter-tag" :class="{ active: filters.country?.includes(opt) }" @click="toggleArrayField('country', opt)">{{ opt }}</button>
-        </div>
-      </div>
-      <div class="filter-section">
-        <label class="filter-label">场地</label>
-        <div class="filter-tags">
-          <button v-for="opt in surfaceOptions" :key="opt" class="filter-tag" :class="{ active: filters.surface?.includes(opt) }" @click="toggleArrayField('surface', opt)">{{ opt }}</button>
-        </div>
-      </div>
-      <div class="filter-section">
-        <label class="filter-label">长度范围（米）</label>
-        <div class="filter-range">
-          <input type="number" v-model.number="distanceMin" placeholder="最小" min="0" />
-          <span class="range-sep">—</span>
-          <input type="number" v-model.number="distanceMax" placeholder="最大" min="0" />
-        </div>
-      </div>
-      <div class="filter-section">
-        <label class="filter-label">马匹数量范围</label>
-        <div class="filter-range">
-          <input type="number" v-model.number="horseCountMin" placeholder="最少" min="0" />
-          <span class="range-sep">—</span>
-          <input type="number" v-model.number="horseCountMax" placeholder="最多" min="0" />
-        </div>
-      </div>
-    </div>
+    </Transition>
 
     <!-- Loading skeleton -->
     <template v-if="pageState === 'loading'">
       <div class="skeleton-container" role="status" aria-live="polite" aria-label="加载中">
-        <div v-for="i in 5" :key="i" class="skeleton-row"></div>
+        <div class="skeleton-podium">
+          <div class="ui-skeleton skeleton-step step-2"></div>
+          <div class="ui-skeleton skeleton-step step-1"></div>
+          <div class="ui-skeleton skeleton-step step-3"></div>
+        </div>
+        <div v-for="i in 4" :key="i" class="ui-skeleton skeleton-row"></div>
       </div>
     </template>
 
     <!-- Empty state -->
     <template v-else-if="pageState === 'empty'">
-      <div class="state-container" role="status" aria-live="polite">
-        <p class="empty-text">还没有人参与竞猜——成为第一个！</p>
-        <router-link to="/" class="home-link">去首页看看</router-link>
+      <div class="ui-state" role="status" aria-live="polite">
+        <span class="ui-state-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5C7 4 6 7 6 9z" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5C17 4 18 7 18 9z" /><path d="M4 22h16" /><path d="M10 22V14h4v8" /><path d="M12 14c-1.5 0-3-2-3-4V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v3c0 2-1.5 4-3 4z" />
+          </svg>
+        </span>
+        <p class="ui-state-text">还没有人参与竞猜——成为第一个！</p>
+        <router-link to="/" class="ui-btn ui-btn--primary">去首页看看</router-link>
       </div>
     </template>
 
     <!-- Error state -->
     <template v-else-if="pageState === 'error'">
-      <div class="state-container" role="alert" aria-live="polite">
-        <p class="error-text">{{ errorMessage }}</p>
-        <button class="refresh-btn" :disabled="refreshing" @click="handleRefresh">{{ refreshing ? '刷新中…' : '刷新重试' }}</button>
+      <div class="ui-state ui-state--error" role="alert" aria-live="polite">
+        <span class="ui-state-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+        </span>
+        <p class="ui-state-text">{{ errorMessage }}</p>
+        <button class="ui-btn ui-btn--primary" :disabled="refreshing" @click="handleRefresh">
+          <span v-if="refreshing" class="ui-spinner"></span>
+          {{ refreshing ? '刷新中…' : '刷新重试' }}
+        </button>
       </div>
     </template>
 
     <!-- Leaderboard data -->
     <template v-else>
-      <div class="table-wrapper">
+      <LeaderboardPodium :entries="podiumEntries" :current-username="authStore.user?.username" />
+
+      <div v-if="tableEntries.length > 0" class="table-card">
         <table>
           <thead>
             <tr>
@@ -198,28 +254,45 @@ onMounted(loadData)
             </tr>
           </thead>
           <tbody>
-            <LeaderboardRow v-for="(entry, index) in leaderboard" :key="entry.username" :entry="entry" :rank="index + 1" :is-current-user="entry.username === authStore.user?.username" />
+            <LeaderboardRow
+              v-for="(entry, index) in tableEntries"
+              :key="entry.username"
+              :class="{ 'ui-stagger': revealing }"
+              :style="{ '--i': index + PODIUM_SIZE }"
+              :entry="entry"
+              :rank="index + PODIUM_SIZE + 1"
+              :is-current-user="entry.username === authStore.user?.username"
+            />
           </tbody>
         </table>
       </div>
-      <p class="updated-hint">积分在每次比赛结算后自动更新</p>
     </template>
   </div>
 </template>
 
 <style scoped>
 .leaderboard-page {
-  padding: var(--spacing-16, 16px);
-  max-width: 1280px;
+  padding: var(--spacing-5) var(--spacing-4);
+  max-width: 960px;
   margin: 0 auto;
+}
+
+.refresh-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.refresh-icon.spinning {
+  animation: spin 0.8s linear infinite;
 }
 
 /* Filter bar */
 .filter-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--spacing-3, 12px);
-  margin-bottom: var(--spacing-4, 16px);
+  gap: var(--spacing-2);
+  margin-bottom: var(--spacing-4);
 }
 
 .filter-toggle {
@@ -227,82 +300,99 @@ onMounted(loadData)
   align-items: center;
   gap: 6px;
   padding: 8px 14px;
-  border: 1px solid var(--color-border-strong, #A8B8A4);
-  border-radius: var(--rounded-sm, 6px);
-  background: var(--color-surface-raised, #FFFFFF);
-  color: var(--color-ink-primary, #1A2E1A);
-  font-size: var(--text-body-sm, 14px);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--rounded-full);
+  background: var(--color-surface-raised);
+  color: var(--color-ink-primary);
+  font-size: var(--text-body-sm);
   font-weight: 600;
   cursor: pointer;
   min-height: 40px;
+  transition: border-color var(--duration-fast) ease, color var(--duration-fast) ease, background var(--duration-fast) ease;
 }
 
-.filter-toggle:hover {
-  border-color: var(--color-primary, #1A5632);
+.filter-toggle:hover,
+.filter-toggle.open {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.filter-toggle.open {
+  background: var(--color-primary-tint);
+}
+
+.filter-chevron {
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.filter-toggle.open .filter-chevron {
+  transform: rotate(180deg);
 }
 
 .filter-badge {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-primary, #1A5632);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--rounded-full);
+  font-family: var(--font-display);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  color: #FFFFFF;
+  background: var(--color-primary);
+  animation: pop-in var(--duration-base) var(--ease-spring);
 }
 
 .clear-btn {
   padding: 8px 14px;
-  border: 1px solid var(--color-destructive, #C53030);
-  border-radius: var(--rounded-sm, 6px);
+  border: 1px solid transparent;
+  border-radius: var(--rounded-full);
   background: transparent;
-  color: var(--color-destructive, #C53030);
-  font-size: var(--text-body-sm, 14px);
+  color: var(--color-destructive);
+  font-size: var(--text-body-sm);
   font-weight: 600;
   cursor: pointer;
   min-height: 40px;
+  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
 }
 
 .clear-btn:hover {
-  background: #FFF5F5;
+  border-color: var(--color-destructive-light);
+  background: var(--color-destructive-tint);
 }
 
 .apply-btn {
-  padding: 8px 18px;
-  border: none;
-  border-radius: var(--rounded-sm, 6px);
-  background: var(--color-primary, #1A5632);
-  color: #ffffff;
-  font-size: var(--text-body-sm, 14px);
-  font-weight: 600;
-  cursor: pointer;
   min-height: 40px;
-  transition: background 0.2s;
-}
-
-.apply-btn:hover {
-  background: var(--color-primary-light, #2D7A4F);
+  border-radius: var(--rounded-full);
 }
 
 /* Filter panel */
+.filter-collapse {
+  margin-bottom: var(--spacing-5);
+}
+
 .filter-panel {
-  background: var(--color-surface-base, #F8FAF7);
-  border: 1px solid var(--color-border-hairline, #D4DCD0);
-  border-radius: var(--rounded-md, 10px);
-  padding: var(--spacing-4, 16px);
-  margin-bottom: var(--spacing-4, 16px);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--rounded-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--spacing-4);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-4, 16px);
+  gap: var(--spacing-4);
 }
 
 .filter-section {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-2, 8px);
+  gap: var(--spacing-2);
 }
 
 .filter-label {
-  font-size: var(--text-caption, 12px);
+  font-size: var(--text-caption);
   font-weight: 600;
-  color: var(--color-ink-secondary, #4A5A4A);
+  letter-spacing: 0.04em;
+  color: var(--color-ink-secondary);
 }
 
 .filter-tags {
@@ -313,29 +403,38 @@ onMounted(loadData)
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
 }
 
 .filter-tag {
-  padding: 4px 10px;
-  border: 1px solid var(--color-border-strong, #A8B8A4);
-  border-radius: var(--rounded-sm, 6px);
-  background: var(--color-surface-raised, #FFFFFF);
-  color: var(--color-ink-primary, #1A2E1A);
-  font-size: var(--text-caption, 12px);
+  padding: 5px 12px;
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--rounded-full);
+  background: var(--color-surface-base);
+  color: var(--color-ink-primary);
+  font-size: var(--text-caption);
   cursor: pointer;
-  transition: border-color 0.15s, background-color 0.15s;
+  transition:
+    border-color var(--duration-fast) ease,
+    background-color var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    transform var(--duration-fast) var(--ease-spring);
 }
 
 .filter-tag:hover {
-  border-color: var(--color-primary, #1A5632);
+  border-color: var(--color-primary);
+}
+
+.filter-tag:active {
+  transform: scale(0.94);
 }
 
 .filter-tag.active {
-  border-color: var(--color-primary, #1A5632);
-  background: #F0F7F2;
-  color: var(--color-primary, #1A5632);
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #FFFFFF;
   font-weight: 600;
+  animation: pop-in var(--duration-base) var(--ease-spring);
 }
 
 .filter-range {
@@ -346,134 +445,110 @@ onMounted(loadData)
 
 .filter-range input {
   width: 120px;
-  padding: 6px 10px;
-  border: 1px solid var(--color-border-strong, #A8B8A4);
-  border-radius: var(--rounded-sm, 6px);
-  font-size: var(--text-body-sm, 14px);
-  color: var(--color-ink-primary, #1A2E1A);
-  background: var(--color-surface-raised, #FFFFFF);
+  padding: 7px 12px;
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--rounded-md);
+  font-size: var(--text-body-sm);
+  color: var(--color-ink-primary);
+  background: var(--color-surface-base);
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-base) var(--ease-out);
 }
 
 .filter-range input:focus {
-  outline: 2px solid var(--color-primary, #1A5632);
-  outline-offset: 2px;
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 4px rgba(26, 86, 50, 0.14);
 }
 
 .range-sep {
-  color: var(--color-ink-secondary, #4A5A4A);
+  color: var(--color-ink-secondary);
 }
 
 /* Skeleton */
 .skeleton-container {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-8);
+  gap: var(--spacing-2);
 }
+
+.skeleton-podium {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: end;
+  gap: var(--spacing-3);
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto var(--spacing-6);
+}
+
+.skeleton-step {
+  border-radius: var(--rounded-md);
+}
+
+.step-1 { height: 220px; }
+.step-2 { height: 190px; }
+.step-3 { height: 165px; }
 
 .skeleton-row {
-  height: 40px;
-  background: linear-gradient(90deg, var(--color-surface-base) 25%, var(--color-border-hairline) 50%, var(--color-surface-base) 75%);
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.5s ease-in-out infinite;
-  border-radius: var(--rounded-sm);
-}
-
-/* State patterns */
-.state-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 50vh;
-  text-align: center;
-  gap: var(--spacing-16, 16px);
-}
-
-.empty-text {
-  color: var(--color-ink-secondary, #4A5A4A);
-  font-size: var(--text-body, 16px);
-}
-
-.error-text {
-  color: var(--color-destructive, #C53030);
-  font-size: var(--text-body, 16px);
-}
-
-.home-link {
-  color: var(--color-primary, #1A5632);
-  font-weight: 600;
-  font-size: var(--text-body, 16px);
-  text-decoration: underline;
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-}
-
-.refresh-btn {
-  padding: 10px 24px;
-  font-size: var(--text-body, 16px);
-  font-weight: 600;
-  color: #ffffff;
-  background: var(--color-primary, #1A5632);
-  border: none;
-  border-radius: var(--rounded-md, 10px);
-  cursor: pointer;
-  min-height: 44px;
-  transition: background 0.2s;
-}
-
-.refresh-btn:hover {
-  background: var(--color-primary-light, #2D7A4F);
-}
-
-.refresh-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  height: 52px;
 }
 
 /* Table */
-.table-wrapper {
+.table-card {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-hairline);
+  border-radius: var(--rounded-lg);
+  box-shadow: var(--shadow-sm);
+  animation: rise-in var(--duration-slow) var(--ease-out) 200ms backwards;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--text-body-sm, 14px);
+  font-size: var(--text-body-sm);
 }
 
 thead tr {
-  border-bottom: 2px solid var(--color-border-hairline, #D4DCD0);
+  background: var(--color-surface-base);
+  border-bottom: 1px solid var(--color-border-hairline);
 }
 
 th {
-  padding: var(--spacing-3, 12px) var(--spacing-2, 8px);
+  padding: var(--spacing-3) var(--spacing-2);
+  font-size: var(--text-caption);
   font-weight: 600;
-  color: var(--color-ink-secondary, #4A5A4A);
+  letter-spacing: 0.04em;
+  color: var(--color-ink-secondary);
   white-space: nowrap;
   text-align: left;
 }
 
-th.col-rank { text-align: center; }
+th.col-rank { text-align: center; width: 64px; }
 th.col-points { text-align: right; }
 th.col-races { text-align: center; }
-th.col-avg { text-align: right; }
+th.col-avg { text-align: right; padding-right: var(--spacing-4); }
 
-.updated-hint {
-  text-align: center;
-  font-size: var(--text-caption, 12px);
-  color: var(--color-ink-secondary, #4A5A4A);
-  margin-top: var(--spacing-8, 8px);
+.table-card :deep(td.col-avg) {
+  padding-right: var(--spacing-4);
+}
+
+@media (max-width: 767px) {
+  .skeleton-podium {
+    gap: var(--spacing-2);
+  }
+
+  .step-1 { height: 180px; }
+  .step-2 { height: 155px; }
+  .step-3 { height: 135px; }
+
+  th.col-rank { width: 48px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .skeleton-row {
+  .refresh-icon.spinning {
     animation: none;
-    background: var(--color-surface-base);
-  }
-  .refresh-btn {
-    transition: none;
   }
 }
 </style>

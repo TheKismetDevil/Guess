@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { resetPassword } from '@/api/auth'
+import AuthShell from '@/components/AuthShell.vue'
 
 const router = useRouter()
 
@@ -94,225 +95,84 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="reset-page">
-    <div class="reset-card">
-      <h1 class="reset-title">重置密码</h1>
-
-      <form @submit.prevent="handleSubmit" novalidate>
-        <div v-if="error" class="error-banner" role="alert" aria-live="polite">
-          {{ error }}
-        </div>
-
-        <div class="form-field">
-          <label for="reset-invite-code">邀请码（注册时绑定的）</label>
-          <input
-            id="reset-invite-code"
-            v-model="inviteCode"
-            type="text"
-            placeholder="请输入 8 位邀请码"
-            maxlength="8"
-            :aria-invalid="!!error"
-            autocomplete="off"
-            @input="clearError"
-          />
-        </div>
-
-        <div class="form-field">
-          <label for="reset-new-password">新密码</label>
-          <input
-            id="reset-new-password"
-            v-model="newPassword"
-            type="password"
-            placeholder="请输入新密码（至少6位）"
-            maxlength="128"
-            :aria-invalid="!!error"
-            autocomplete="new-password"
-            @input="clearError"
-          />
-        </div>
-
-        <div class="form-field">
-          <label for="reset-confirm-password">确认新密码</label>
-          <input
-            id="reset-confirm-password"
-            v-model="confirmPassword"
-            type="password"
-            placeholder="再次输入新密码"
-            maxlength="128"
-            :aria-invalid="!!error"
-            autocomplete="new-password"
-            @input="clearError"
-          />
-        </div>
-
-        <button
-          type="submit"
-          class="submit-btn"
-          :disabled="loading"
-          :aria-busy="loading"
-        >
-          <span v-if="loading" class="spinner"></span>
-          {{ loading ? '重置中…' : '确认重置' }}
-        </button>
-      </form>
-
-      <div class="reset-links">
-        <router-link to="/login" class="reset-link">已有账号？去登录</router-link>
+  <AuthShell title="重置密码" subtitle="用注册时绑定的邀请码设置新密码">
+    <form @submit.prevent="handleSubmit" novalidate>
+      <div v-if="error" :key="error" class="ui-banner ui-banner--error" role="alert" aria-live="polite">
+        {{ error }}
       </div>
-    </div>
-  </div>
+
+      <div class="ui-field">
+        <label class="ui-label" for="reset-invite-code">邀请码（注册时绑定的）</label>
+        <input
+          id="reset-invite-code"
+          v-model="inviteCode"
+          class="ui-input code-input"
+          type="text"
+          placeholder="请输入 8 位邀请码"
+          maxlength="8"
+          :aria-invalid="!!error"
+          autocomplete="off"
+          @input="clearError"
+        />
+      </div>
+
+      <div class="ui-field">
+        <label class="ui-label" for="reset-new-password">新密码</label>
+        <input
+          id="reset-new-password"
+          v-model="newPassword"
+          class="ui-input"
+          type="password"
+          placeholder="请输入新密码（至少6位）"
+          maxlength="128"
+          :aria-invalid="!!error"
+          autocomplete="new-password"
+          @input="clearError"
+        />
+      </div>
+
+      <div class="ui-field">
+        <label class="ui-label" for="reset-confirm-password">确认新密码</label>
+        <input
+          id="reset-confirm-password"
+          v-model="confirmPassword"
+          class="ui-input"
+          type="password"
+          placeholder="再次输入新密码"
+          maxlength="128"
+          :aria-invalid="!!error"
+          autocomplete="new-password"
+          @input="clearError"
+        />
+      </div>
+
+      <button
+        type="submit"
+        class="ui-btn ui-btn--primary ui-btn--block submit-btn"
+        :disabled="loading"
+        :aria-busy="loading"
+      >
+        <span v-if="loading" class="ui-spinner"></span>
+        {{ loading ? '重置中…' : '确认重置' }}
+      </button>
+    </form>
+
+    <template #footer>
+      <router-link to="/login">已有账号？去登录</router-link>
+    </template>
+  </AuthShell>
 </template>
 
 <style scoped>
-.reset-page {
-  min-height: 100dvh;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-6) var(--spacing-4);
-  background: var(--color-surface-base);
-}
-
-.reset-card {
-  width: 100%;
-  max-width: 400px;
-  background: var(--color-surface-raised);
-  border-radius: var(--rounded-lg);
-  padding: var(--spacing-8);
-  box-shadow: var(--shadow-md);
-}
-
-.reset-title {
-  font-family: 'Barlow Condensed', system-ui, sans-serif;
-  font-size: 36px;
-  font-weight: 600;
-  color: var(--color-primary);
-  text-align: center;
-  margin-bottom: var(--spacing-6);
-}
-
-.form-field {
-  margin-bottom: var(--spacing-5);
-}
-
-.form-field label {
-  display: block;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-ink-primary);
-  margin-bottom: var(--spacing-2);
-}
-
-.form-field input {
-  width: 100%;
-  padding: var(--spacing-3) var(--spacing-3);
-  font-size: 16px;
-  color: var(--color-ink-primary);
-  background: var(--color-surface-base);
-  border: 1px solid var(--color-border-hairline);
-  border-radius: var(--rounded-md);
-  outline: none;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-  min-height: 44px;
-}
-
-.form-field input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 25%, transparent);
-}
-
-.form-field input[aria-invalid="true"] {
-  border-color: var(--color-destructive);
-}
-
-.error-banner {
-  background: var(--color-destructive-light);
-  color: var(--color-destructive);
-  padding: var(--spacing-3);
-  border-radius: var(--rounded-md);
-  font-size: 14px;
-  margin-bottom: var(--spacing-4);
-  text-align: center;
+.code-input {
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
 }
 
 .submit-btn {
-  width: 100%;
-  padding: 12px;
-  font-size: 16px;
-  font-weight: 600;
-  color: #ffffff;
-  background: var(--color-primary);
-  border: none;
-  border-radius: var(--rounded-md);
-  cursor: pointer;
-  transition: background 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-2);
-  min-height: 44px;
-}
-
-.submit-btn:hover:not(:disabled) {
-  background: var(--color-primary-light);
-}
-
-.submit-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.submit-btn:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #ffffff;
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.reset-links {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: var(--spacing-5);
-}
-
-.reset-link {
-  font-size: 14px;
-  color: var(--color-primary);
-  font-weight: 600;
-  text-decoration: none;
-  text-align: center;
-  padding: var(--spacing-1) 0;
-  transition: opacity var(--transition-fast);
-}
-
-.reset-link:hover {
-  text-decoration: underline;
-  opacity: 0.85;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
-  .form-field input {
-    transition: none;
-  }
-  .submit-btn {
-    transition: none;
-  }
+  margin-top: var(--spacing-2);
+  min-height: 48px;
 }
 </style>
