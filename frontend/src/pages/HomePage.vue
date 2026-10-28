@@ -226,7 +226,7 @@ onMounted(loadData)
           :aria-selected="statusFilter === tab.value"
           @click="selectStatus(tab.value)"
         >
-          {{ tab.label }}<span class="tab-count">{{ tab.count }}</span>
+          <span class="tab-label">{{ tab.label }}</span><span class="tab-count">{{ tab.count }}</span>
         </button>
       </div>
     </header>
@@ -497,7 +497,8 @@ onMounted(loadData)
 
 .status-filter-tab {
   position: relative;
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -520,8 +521,16 @@ onMounted(loadData)
   color: #FFFFFF;
 }
 
+.tab-label {
+  line-height: 1;
+}
+
 .tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 18px;
+  height: 18px;
   padding: 0 5px;
   border-radius: var(--rounded-full);
   font-family: var(--font-display);
