@@ -5,6 +5,8 @@ defineProps<{
   entry: LeaderboardEntry
   rank: number
   isCurrentUser: boolean
+  leaderGap: number
+  previousGap: number
 }>()
 </script>
 
@@ -25,6 +27,8 @@ defineProps<{
       </span>
     </td>
     <td class="col-points" :class="{ negative: entry.total_points < 0 }">{{ entry.total_points }}</td>
+    <td class="col-gap">{{ leaderGap }}</td>
+    <td class="col-gap">{{ previousGap }}</td>
     <td class="col-races">{{ entry.races_participated }}</td>
     <td class="col-avg">{{ entry.avg_points.toFixed(1) }}</td>
   </tr>
@@ -144,6 +148,8 @@ td {
   color: var(--color-ink-secondary, #4A5A4A);
   text-align: center;
 }
+
+.col-gap { text-align: right; color: var(--color-ink-secondary); font-size: var(--text-body-sm); }
 
 .col-avg {
   font-size: var(--text-body-sm, 14px);

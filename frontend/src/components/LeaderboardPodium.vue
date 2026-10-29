@@ -46,6 +46,7 @@ const places = computed(() =>
           <small>分</small>
         </span>
         <span class="podium-sub">{{ place.entry.races_participated }} 场 · 场均 {{ place.entry.avg_points.toFixed(1) }}</span>
+        <span class="podium-sub">距榜首 {{ entries[0]!.total_points - place.entry.total_points }} · 距上一名 {{ place.rank === 1 ? '—' : entries[place.rank - 2]!.total_points - place.entry.total_points }}</span>
       </div>
       <div class="podium-block" aria-hidden="true">
         <span class="podium-rank">{{ place.rank }}</span>

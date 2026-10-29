@@ -12,6 +12,8 @@ export interface LeaderboardResponse {
 }
 
 export interface LeaderboardFilters {
+  date_from?: string
+  date_to?: string
   age_range?: string[]
   sex_restriction?: string[]
   race_grade?: string[]
@@ -21,4 +23,11 @@ export interface LeaderboardFilters {
   distance_max?: number
   horse_count_min?: number
   horse_count_max?: number
+}
+
+export interface LeaderboardRace {
+  id: number | null
+  name: string
+  date: string
+  source: 'live' | 'historical'
 }

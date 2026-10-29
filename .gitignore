@@ -29,6 +29,7 @@ build/
 *.db
 
 # Generated test/review output
+/outputs/
 test_output*.txt
 review_diff.txt
 test_patch_result.txt

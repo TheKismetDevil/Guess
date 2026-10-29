@@ -1,6 +1,6 @@
 """Admin API endpoints — invite code management."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
@@ -9,6 +9,15 @@ from app.schemas.invite_code import InviteCodeCreate, InviteCodeResponse
 from app.services import invite_code_service
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+
+
+@router.post('/historical-scores')
+async def import_historical_scores(request: Request, db: AsyncSession = Depends(get_db), _admin=Depends(get_current_admin)):
+    from app.services.historical_import_service import import_workbook
+    content = await request.body()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail={'code': 'FILE_TOO_LARGE', 'message': '文件不能超过 10 MB'})
+    return {'data': await import_workbook(db, content)}
 
 
 @router.get("/invite-codes", response_model=dict)

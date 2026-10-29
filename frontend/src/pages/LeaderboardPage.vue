@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
-import { getLeaderboard } from '@/api/leaderboard'
-import type { LeaderboardEntry, LeaderboardFilters } from '@/types/leaderboard'
+import { getLeaderboard, getLeaderboardRaces } from '@/api/leaderboard'
+import apiClient from '@/api/client'
+import axios from 'axios'
+import type { LeaderboardEntry, LeaderboardFilters, LeaderboardRace } from '@/types/leaderboard'
 import LeaderboardRow from '@/components/LeaderboardRow.vue'
 import LeaderboardPodium from '@/components/LeaderboardPodium.vue'
 import { useRevealOnce } from '@/composables/useRevealOnce'
@@ -22,8 +24,35 @@ const PODIUM_SIZE = 3
 const authStore = useAuthStore()
 const pageState = ref<PageState>('loading')
 const leaderboard = ref<LeaderboardEntry[]>([])
+const matchingRaces = ref<LeaderboardRace[]>([])
+const raceListOpen = ref(false)
+const dateFrom = ref('')
+const dateTo = ref('')
+const dateError = ref('')
+let requestNumber = 0
 const errorMessage = ref('加载失败，请刷新重试')
 const refreshing = ref(false)
+const importing = ref(false)
+const importMessage = ref('')
+
+async function importScores(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  importing.value = true
+  importMessage.value = ''
+  try {
+    const response = await apiClient.post('/admin/historical-scores', await file.arrayBuffer(), { headers: { 'Content-Type': 'application/octet-stream' } })
+    const result = response.data.data
+    importMessage.value = `已导入 ${result.imported_races} 场比赛、${result.imported_scores} 条得分；跳过 ${result.skipped_races.length} 场已有比赛。${result.skipped_races.length ? `（${result.skipped_races.join('、')}）` : ''}`
+    await loadData()
+  } catch (err) {
+    importMessage.value = axios.isAxiosError(err) ? (err.response?.data?.detail?.message || '导入失败，请检查文件') : '导入失败，请检查文件'
+  } finally {
+    importing.value = false
+    input.value = ''
+  }
+}
 const { revealing, reveal } = useRevealOnce()
 
 const podiumEntries = computed(() => leaderboard.value.slice(0, PODIUM_SIZE))
@@ -35,7 +64,7 @@ const filters = ref<LeaderboardFilters>({})
 const tagSections: { field: TagField; label: string; options: string[]; grid?: boolean }[] = [
   { field: 'age_range', label: '年龄范围', options: AGE_RANGE_OPTIONS },
   { field: 'sex_restriction', label: '性别限定', options: SEX_RESTRICTION_OPTIONS },
-  { field: 'race_grade', label: '比赛等级', options: RACE_GRADE_OPTIONS },
+  { field: 'race_grade', label: '比赛等级', options: [...RACE_GRADE_OPTIONS, 'J·G1'] },
   { field: 'country', label: '国家或地区', options: COUNTRY_OPTIONS, grid: true },
   { field: 'surface', label: '场地', options: SURFACE_OPTIONS },
 ]
@@ -49,6 +78,7 @@ function hasActiveFilters(): boolean {
     filters.value.age_range?.length || filters.value.sex_restriction?.length ||
     filters.value.race_grade?.length || filters.value.country?.length ||
     filters.value.surface?.length ||
+    dateFrom.value || dateTo.value ||
     distanceMin.value !== undefined || distanceMax.value !== undefined ||
     horseCountMin.value !== undefined || horseCountMax.value !== undefined
   )
@@ -58,7 +88,7 @@ const activeFilterCount = computed(() => {
   const tagCount = tagSections.reduce((n, s) => n + (filters.value[s.field]?.length ?? 0), 0)
   const rangeCount = [distanceMin, distanceMax, horseCountMin, horseCountMax]
     .filter(r => toNum(r.value) !== undefined).length
-  return tagCount + rangeCount
+  return tagCount + rangeCount + Number(!!dateFrom.value) + Number(!!dateTo.value)
 })
 
 function toggleArrayField(field: TagField, value: string) {
@@ -76,6 +106,12 @@ function toNum(v: unknown): number | undefined {
 }
 
 async function loadData() {
+  if (dateFrom.value && dateTo.value && dateFrom.value > dateTo.value) {
+    dateError.value = '开始日期不能晚于结束日期'
+    return
+  }
+  dateError.value = ''
+  const currentRequest = ++requestNumber
   pageState.value = 'loading'
   errorMessage.value = '加载失败，请刷新重试'
   try {
@@ -85,13 +121,18 @@ async function loadData() {
       distance_max: toNum(distanceMax.value),
       horse_count_min: toNum(horseCountMin.value),
       horse_count_max: toNum(horseCountMax.value),
+      date_from: dateFrom.value || undefined,
+      date_to: dateTo.value || undefined,
     }
-    const data = await getLeaderboard(allFilters)
+    const [data, races] = await Promise.all([getLeaderboard(allFilters), getLeaderboardRaces(allFilters)])
+    if (currentRequest !== requestNumber) return
     leaderboard.value = data
+    matchingRaces.value = races
     const hasActivity = data.length > 0 && data.some(e => e.races_participated > 0)
     pageState.value = hasActivity ? 'success' : 'empty'
     if (hasActivity) reveal(data.length)
   } catch (err) {
+    if (currentRequest !== requestNumber) return
     console.error('Leaderboard load failed:', err)
     pageState.value = 'error'
   }
@@ -109,6 +150,8 @@ function clearFilters() {
   distanceMax.value = undefined
   horseCountMin.value = undefined
   horseCountMax.value = undefined
+  dateFrom.value = ''
+  dateTo.value = ''
   loadData()
 }
 
@@ -134,6 +177,15 @@ onMounted(loadData)
         {{ refreshing ? '刷新中…' : '刷新' }}
       </button>
     </header>
+
+    <div v-if="authStore.isAdmin" class="historical-import">
+      <label class="ui-btn ui-btn--ghost ui-btn--sm">
+        {{ importing ? '导入中…' : '导入历史得分' }}
+        <input type="file" accept=".xlsx" :disabled="importing" @change="importScores" />
+      </label>
+      <span>请使用包含“历史得分”和“赛事资料”工作表的 Excel，并填写 QQ 号。</span>
+      <p v-if="importMessage" role="status">{{ importMessage }}</p>
+    </div>
 
     <!-- Filter bar -->
     <div class="filter-bar">
@@ -178,6 +230,15 @@ onMounted(loadData)
             </div>
           </div>
           <div class="filter-section">
+            <label class="filter-label">比赛日期</label>
+            <div class="filter-range date-range">
+              <input type="date" v-model="dateFrom" aria-label="开始日期" />
+              <span class="range-sep">—</span>
+              <input type="date" v-model="dateTo" aria-label="结束日期" />
+            </div>
+            <p v-if="dateError" class="date-error" role="alert">{{ dateError }}</p>
+          </div>
+          <div class="filter-section">
             <label class="filter-label">长度范围（米）</label>
             <div class="filter-range">
               <input type="number" v-model.number="distanceMin" placeholder="最小" min="0" />
@@ -196,6 +257,23 @@ onMounted(loadData)
         </div>
       </div>
     </Transition>
+
+    <section v-if="pageState === 'success' || pageState === 'empty'" class="matching-races">
+      <button class="race-list-toggle" :aria-expanded="raceListOpen" @click="raceListOpen = !raceListOpen">
+        当前结果包含 {{ matchingRaces.length }} 场比赛 {{ raceListOpen ? '收起' : '查看' }}
+      </button>
+      <div v-if="raceListOpen" class="race-list">
+        <p v-if="!matchingRaces.length">当前筛选没有符合条件的比赛。</p>
+        <ul v-else>
+          <li v-for="(race, index) in matchingRaces" :key="`${race.source}-${race.id ?? index}`">
+            <span>{{ race.date || '—' }}</span>
+            <router-link v-if="race.source === 'live' && race.id !== null" :to="`/races/${race.id}`">{{ race.name }}</router-link>
+            <span v-else>{{ race.name }}</span>
+            <span v-if="race.source === 'historical'" class="race-source">历史</span>
+          </li>
+        </ul>
+      </div>
+    </section>
 
     <!-- Loading skeleton -->
     <template v-if="pageState === 'loading'">
@@ -217,7 +295,7 @@ onMounted(loadData)
             <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5C7 4 6 7 6 9z" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5C17 4 18 7 18 9z" /><path d="M4 22h16" /><path d="M10 22V14h4v8" /><path d="M12 14c-1.5 0-3-2-3-4V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v3c0 2-1.5 4-3 4z" />
           </svg>
         </span>
-        <p class="ui-state-text">还没有人参与竞猜——成为第一个！</p>
+        <p class="ui-state-text">{{ hasActiveFilters() ? '当前筛选没有符合条件的成绩。' : '还没有人参与竞猜——成为第一个！' }}</p>
         <router-link to="/" class="ui-btn ui-btn--primary">去首页看看</router-link>
       </div>
     </template>
@@ -249,6 +327,8 @@ onMounted(loadData)
               <th scope="col" class="col-rank">排名</th>
               <th scope="col" class="col-name">用户名</th>
               <th scope="col" class="col-points">积分</th>
+              <th scope="col" class="col-gap">距榜首</th>
+              <th scope="col" class="col-gap">距上一名</th>
               <th scope="col" class="col-races">场数</th>
               <th scope="col" class="col-avg">场均</th>
             </tr>
@@ -261,6 +341,8 @@ onMounted(loadData)
               :style="{ '--i': index + PODIUM_SIZE }"
               :entry="entry"
               :rank="index + PODIUM_SIZE + 1"
+              :leader-gap="leaderboard[0]!.total_points - entry.total_points"
+              :previous-gap="leaderboard[index + PODIUM_SIZE - 1]!.total_points - entry.total_points"
               :is-current-user="entry.username === authStore.user?.username"
             />
           </tbody>
@@ -271,6 +353,21 @@ onMounted(loadData)
 </template>
 
 <style scoped>
+.matching-races { margin: 0 0 16px; }
+.race-list-toggle { color: var(--color-primary); font-weight: 600; padding: 8px 0; }
+.race-list { background: var(--color-surface-raised); border: 1px solid var(--color-border-hairline); border-radius: var(--rounded-md); max-height: 320px; overflow-y: auto; padding: 8px 12px; }
+.race-list li { display: flex; align-items: center; gap: 12px; padding: 6px 0; font-size: 14px; border-bottom: 1px solid var(--color-border-hairline); }
+.race-list li:last-child { border-bottom: 0; }
+.race-list a { color: var(--color-primary); }
+.race-source { color: var(--color-ink-secondary); font-size: 12px; }
+.date-range input { width: auto; min-width: 0; max-width: 160px; }
+.date-error { color: var(--color-destructive); font-size: 13px; }
+th.col-gap { text-align: right; }
+.historical-import { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; font-size: 14px; }
+.historical-import label { cursor: pointer; }
+.historical-import input { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+.historical-import label:focus-within { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.historical-import p { width: 100%; }
 .leaderboard-page {
   padding: var(--spacing-5) var(--spacing-4);
   max-width: 960px;

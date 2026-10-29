@@ -81,7 +81,7 @@ class RaceCreate(BaseModel):
     @field_validator("country")
     @classmethod
     def validate_country(cls, v: str) -> str:
-        allowed = {"日本", "英国", "美国", "澳大利亚", "中国香港", "法国", "阿联酋", "爱尔兰", "沙特", "南非", "德国", "加拿大", "新西兰", "韩国", "阿根廷", "乌拉圭", "巴西", "智利", "秘鲁", "其他"}
+        allowed = {"日本", "英国", "美国", "澳大利亚", "中国香港", "法国", "阿联酋", "爱尔兰", "沙特", "卡塔尔", "南非", "德国", "加拿大", "新西兰", "韩国", "阿根廷", "乌拉圭", "巴西", "智利", "秘鲁", "其他"}
         if v not in allowed:
             raise ValueError(f"无效的国家或地区，允许的值: {', '.join(allowed)}")
         return v
@@ -96,7 +96,7 @@ class RaceCreate(BaseModel):
     @field_validator("surface")
     @classmethod
     def validate_surface(cls, v: str) -> str:
-        allowed = {"草地", "泥地", "全天候", "其他"}
+        allowed = {"草地", "泥地", "全天候", "障碍", "其他"}
         if v not in allowed:
             raise ValueError(f"无效的场地类型，允许的值: {', '.join(allowed)}")
         return v
@@ -166,7 +166,7 @@ class RaceUpdate(BaseModel):
     @classmethod
     def validate_country(cls, v: str | None) -> str | None:
         if v is not None:
-            allowed = {"日本", "英国", "美国", "澳大利亚", "中国香港", "法国", "阿联酋", "爱尔兰", "沙特", "南非", "德国", "加拿大", "新西兰", "韩国", "阿根廷", "乌拉圭", "巴西", "智利", "秘鲁", "其他"}
+            allowed = {"日本", "英国", "美国", "澳大利亚", "中国香港", "法国", "阿联酋", "爱尔兰", "沙特", "卡塔尔", "南非", "德国", "加拿大", "新西兰", "韩国", "阿根廷", "乌拉圭", "巴西", "智利", "秘鲁", "其他"}
             if v not in allowed:
                 raise ValueError(f"无效的国家或地区，允许的值: {', '.join(allowed)}")
         return v
@@ -184,7 +184,7 @@ class RaceUpdate(BaseModel):
     @classmethod
     def validate_surface(cls, v: str | None) -> str | None:
         if v is not None:
-            allowed = {"草地", "泥地", "全天候", "其他"}
+            allowed = {"草地", "泥地", "全天候", "障碍", "其他"}
             if v not in allowed:
                 raise ValueError(f"无效的场地类型，允许的值: {', '.join(allowed)}")
         return v

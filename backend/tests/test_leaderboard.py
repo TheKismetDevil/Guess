@@ -14,6 +14,27 @@ from app.schemas.result import ResultEntry, ResultPosition
 from app.services import result_service
 
 
+@pytest.mark.asyncio
+async def test_hidden_race_name_is_not_exposed(async_client, leaderboard_data):
+    response = await async_client.get('/api/v1/leaderboard/races')
+    assert response.status_code == 200
+    assert len(response.json()['data']) == 2
+    assert all(r['name'] == '未公开比赛' and r['date'] == '' and r['id'] is None for r in response.json()['data'])
+
+
+@pytest.mark.asyncio
+async def test_live_race_date_and_horse_count_match_leaderboard(async_client, leaderboard_data):
+    params = {'date_from': '2026-06-01', 'date_to': '2026-06-01', 'horse_count_min': 4, 'horse_count_max': 4}
+    ranking = (await async_client.get('/api/v1/leaderboard', params=params)).json()['data']
+    races = (await async_client.get('/api/v1/leaderboard/races', params=params)).json()['data']
+    assert len(races) == 1
+    assert next(entry for entry in ranking if entry['username'] == 'user1')['races_participated'] == 1
+    params['date_from'] = '2026-06-02'
+    params['date_to'] = '2026-06-03'
+    assert (await async_client.get('/api/v1/leaderboard/races', params=params)).json()['data'] == []
+    assert all(entry['races_participated'] == 0 for entry in (await async_client.get('/api/v1/leaderboard', params=params)).json()['data'])
+
+
 @pytest.fixture
 async def leaderboard_data(db_session: AsyncSession) -> dict:
     """Create data for leaderboard tests: 3 users, 2 races, settled.
