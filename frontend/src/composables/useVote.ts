@@ -46,6 +46,7 @@ export function useVote(): UseVoteReturn {
 
   async function castVoteAction(horse: RaceHorseSnapshot, raceId: number) {
     const previousVotedName = votedHorseName.value
+    const previousVotedRaceHorseId = votedRaceHorseId.value
     const optimisticName = horse.snapshot_data.name
 
     votedHorseName.value = optimisticName
@@ -61,9 +62,7 @@ export function useVote(): UseVoteReturn {
     } catch (err: unknown) {
       if (unmounted) return
       votedHorseName.value = previousVotedName
-      if (previousVotedName === null) {
-        votedRaceHorseId.value = null
-      }
+      votedRaceHorseId.value = previousVotedRaceHorseId
       const axiosErr = err as { response?: { data?: { detail?: { message?: string } } } }
       errorMessage.value = axiosErr?.response?.data?.detail?.message ?? '投票失败，请重试'
     } finally {
@@ -80,6 +79,7 @@ export function useVote(): UseVoteReturn {
 
   async function cancelVoteAction(raceId: number) {
     const previousVotedName = votedHorseName.value
+    const previousVotedRaceHorseId = votedRaceHorseId.value
 
     // Optimistic clear
     votedHorseName.value = null
@@ -94,7 +94,7 @@ export function useVote(): UseVoteReturn {
       if (unmounted) return
       // Rollback on failure
       votedHorseName.value = previousVotedName
-      // Need to find the previous race_horse_id — won't be accurate but name is sufficient
+      votedRaceHorseId.value = previousVotedRaceHorseId
       const axiosErr = err as { response?: { data?: { detail?: { message?: string } } } }
       errorMessage.value = axiosErr?.response?.data?.detail?.message ?? '取消投票失败，请重试'
     } finally {

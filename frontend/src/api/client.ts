@@ -66,10 +66,13 @@ apiClient.interceptors.response.use(
             const auth = JSON.parse(stored)
             if (auth.refreshToken) {
               try {
-                const res = await axios.post('/api/v1/auth/refresh', {
+                const res = await axios.post<{ data: { access_token: string } }>('/api/v1/auth/refresh', {
                   refresh_token: auth.refreshToken,
                 })
-                const newToken = res.data.access_token
+                const newToken = res.data?.data?.access_token
+                if (typeof newToken !== 'string' || !newToken.trim()) {
+                  throw new Error('刷新令牌响应缺少 access_token')
+                }
                 // Update localStorage
                 auth.accessToken = newToken
                 localStorage.setItem('auth', JSON.stringify(auth))
