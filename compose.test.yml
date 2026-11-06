@@ -1,0 +1,16 @@
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:55432:5432"
+    environment:
+      POSTGRES_USER: guess_test
+      POSTGRES_PASSWORD: guess_test_password
+      POSTGRES_DB: guess_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guess_test -d guess_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 20

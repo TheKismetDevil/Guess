@@ -57,7 +57,7 @@ def upgrade() -> None:
             "status",
             status_enum,
             nullable=False,
-            server_default=sa.text("'voting'"),
+            server_default=sa.text("'VOTING'"),
         ),
         sa.Column("custom_scoring", sa.JSON(), nullable=True),
         sa.Column("creator_id", sa.Integer(), nullable=False),

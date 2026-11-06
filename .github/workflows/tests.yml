@@ -1,0 +1,66 @@
+name: Automated tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.5.2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: guess_test
+          POSTGRES_PASSWORD: guess_test_password
+          POSTGRES_DB: guess_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U guess_test -d guess_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://guess_test:guess_test_password@localhost:5432/guess_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - name: SQLite unit and API tests
+        run: python -m pytest -m "not postgres" -q
+      - name: PostgreSQL migrations and integration tests
+        run: python -m pytest -m postgres -q

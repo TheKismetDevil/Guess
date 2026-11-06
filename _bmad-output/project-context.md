@@ -38,7 +38,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 | Async Driver | asyncpg | >=0.29 | — |
 | Python | Python | >=3.12 | — |
 | Testing (Backend) | pytest + pytest-asyncio + aiosqlite | >=8 / >=0.23 / >=0.19 | `asyncio_mode = auto`; in-memory SQLite for isolated tests |
-| Testing (Frontend) | vitest | — | Optional, not yet configured |
+| Testing (Frontend) | Node test + Vitest / Vue Test Utils / happy-dom | — | `pnpm test` runs both suites; DOM tests in `tests/unit/` |
 | Container | Docker Compose | — | PostgreSQL only; frontend/backend run locally |
 
 ## Critical Implementation Rules
@@ -157,6 +157,14 @@ _This file contains critical rules and patterns that AI agents must follow when 
 
 **Dates:** ISO 8601 strings (`2026-06-09T15:00:00Z`)
 **Null handling:** Use `null`, never empty strings or omitted fields
+
+### 自动化验证
+
+- 前端 `pnpm test` 执行原有 Node 回归和 Vitest DOM 测试，`pnpm run test:typecheck` 检查测试类型；不要让 Vitest 收集 `tests/regressions.test.mjs` 的 Node 用例。DOM 测试不代表真实浏览器视觉验收。
+- PostgreSQL 用例位于 `backend/tests/postgres/`，标记 `postgres`；仅使用显式 `TEST_DATABASE_URL`（数据库名以 `_test` 结尾），每例使用独立随机 schema。不得复用实际应用数据库或执行数据库级清空。`compose.test.yml` 端口55432、项目名guess-tests，与应用容器隔离。
+- Alembic 支持通过 `config.attributes['connection']` 传入连接，供集成测试在隔离 schema 执行真实迁移。
+- Windows `scripts/test.ps1` 支持 `-PythonExe` 和 `-IncludePostgres`，仅清理由本次脚本启动的测试容器；CI配置为 `.github/workflows/tests.yml`。
+- passlib1.7的测试/安装依赖限定bcrypt4.0.x；升级依赖时必须在干净Python3.12环境验证认证测试。
 
 ### Development Workflow Rules
 
