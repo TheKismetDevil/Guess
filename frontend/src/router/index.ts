@@ -48,6 +48,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/pages/RaceDetailPage.vue'),
     meta: { title: '比赛详情' }
   },
+  {
+    path: '/admin/historical-scores',
+    name: 'admin-historical-scores',
+    component: () => import('@/pages/admin/HistoricalScoresPage.vue'),
+    meta: { requiresAuth: true, isAdmin: true, title: '历史成绩管理' }
+  },
   // Admin routes — top-level, share AppLayout with all other pages
   {
     path: '/admin/horses',

@@ -2,11 +2,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
 import { getLeaderboard, getLeaderboardRaces } from '@/api/leaderboard'
-import apiClient from '@/api/client'
-import axios from 'axios'
-import type { LeaderboardEntry, LeaderboardFilters, LeaderboardRace } from '@/types/leaderboard'
+import type { LeaderboardEntry, LeaderboardFilters, LeaderboardRace, LeaderboardSort } from '@/types/leaderboard'
 import LeaderboardRow from '@/components/LeaderboardRow.vue'
-import LeaderboardPodium from '@/components/LeaderboardPodium.vue'
+import LeaderboardSortSelect from '@/components/LeaderboardSortSelect.vue'
+import HeadToHeadComparison from '@/components/HeadToHeadComparison.vue'
 import { useRevealOnce } from '@/composables/useRevealOnce'
 import {
   AGE_RANGE_OPTIONS,
@@ -19,8 +18,6 @@ import {
 type PageState = 'loading' | 'empty' | 'error' | 'success'
 type TagField = 'age_range' | 'sex_restriction' | 'race_grade' | 'country' | 'surface'
 
-const PODIUM_SIZE = 3
-
 const authStore = useAuthStore()
 const pageState = ref<PageState>('loading')
 const leaderboard = ref<LeaderboardEntry[]>([])
@@ -32,31 +29,17 @@ const dateError = ref('')
 let requestNumber = 0
 const errorMessage = ref('加载失败，请刷新重试')
 const refreshing = ref(false)
-const importing = ref(false)
-const importMessage = ref('')
-
-async function importScores(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  importing.value = true
-  importMessage.value = ''
-  try {
-    const response = await apiClient.post('/admin/historical-scores', await file.arrayBuffer(), { headers: { 'Content-Type': 'application/octet-stream' } })
-    const result = response.data.data
-    importMessage.value = `已导入 ${result.imported_races} 场比赛、${result.imported_scores} 条得分；跳过 ${result.skipped_races.length} 场已有比赛。${result.skipped_races.length ? `（${result.skipped_races.join('、')}）` : ''}`
-    await loadData()
-  } catch (err) {
-    importMessage.value = axios.isAxiosError(err) ? (err.response?.data?.detail?.message || '导入失败，请检查文件') : '导入失败，请检查文件'
-  } finally {
-    importing.value = false
-    input.value = ''
-  }
+const sortBy = ref<LeaderboardSort>('total_points')
+const appliedSort = ref<LeaderboardSort>('total_points')
+const minimumAverageRaces = computed(() => Math.floor((matchingRaces.value.length * 3 + 4) / 5))
+function rankingValue(entry: LeaderboardEntry) {
+  return appliedSort.value === 'avg_points'
+    ? (entry.races_participated ? entry.total_points / entry.races_participated : 0)
+    : entry.total_points
 }
+const comparisonOpen = ref(false)
+const appliedFilters = ref<LeaderboardFilters>({})
 const { revealing, reveal } = useRevealOnce()
-
-const podiumEntries = computed(() => leaderboard.value.slice(0, PODIUM_SIZE))
-const tableEntries = computed(() => leaderboard.value.slice(PODIUM_SIZE))
 
 // Filter state
 const filterOpen = ref(false)
@@ -112,6 +95,7 @@ async function loadData() {
   }
   dateError.value = ''
   const currentRequest = ++requestNumber
+  const currentSort = sortBy.value
   pageState.value = 'loading'
   errorMessage.value = '加载失败，请刷新重试'
   try {
@@ -124,10 +108,12 @@ async function loadData() {
       date_from: dateFrom.value || undefined,
       date_to: dateTo.value || undefined,
     }
-    const [data, races] = await Promise.all([getLeaderboard(allFilters), getLeaderboardRaces(allFilters)])
+    const [data, races] = await Promise.all([getLeaderboard(allFilters, currentSort), getLeaderboardRaces(allFilters)])
     if (currentRequest !== requestNumber) return
     leaderboard.value = data
+    appliedSort.value = currentSort
     matchingRaces.value = races
+    appliedFilters.value = allFilters
     const hasActivity = data.length > 0 && data.some(e => e.races_participated > 0)
     pageState.value = hasActivity ? 'success' : 'empty'
     if (hasActivity) reveal(data.length)
@@ -179,16 +165,13 @@ onMounted(loadData)
     </header>
 
     <div v-if="authStore.isAdmin" class="historical-import">
-      <label class="ui-btn ui-btn--ghost ui-btn--sm">
-        {{ importing ? '导入中…' : '导入历史得分' }}
-        <input type="file" accept=".xlsx" :disabled="importing" @change="importScores" />
-      </label>
-      <span>请使用包含“历史得分”和“赛事资料”工作表的 Excel，并填写 QQ 号。</span>
-      <p v-if="importMessage" role="status">{{ importMessage }}</p>
+      <router-link to="/admin/historical-scores" class="ui-btn ui-btn--ghost ui-btn--sm">管理历史成绩</router-link>
     </div>
 
     <!-- Filter bar -->
     <div class="filter-bar">
+      <LeaderboardSortSelect v-model="sortBy" @change="loadData" />
+      <button class="filter-toggle" :class="{ open: comparisonOpen }" :aria-expanded="comparisonOpen" aria-controls="head-to-head-panel" @click="comparisonOpen = !comparisonOpen">Head to Head 对比</button>
       <button
         class="filter-toggle"
         :class="{ open: filterOpen }"
@@ -258,6 +241,12 @@ onMounted(loadData)
       </div>
     </Transition>
 
+    <p v-if="appliedSort === 'avg_points' && (pageState === 'success' || pageState === 'empty')" class="average-rule">
+      场均排行仅展示参赛场次达到当前筛选比赛数 60% 的选手。当前共 {{ matchingRaces.length }} 场，至少需参与 {{ minimumAverageRaces }} 场（向上取整）。
+    </p>
+
+    <HeadToHeadComparison v-if="comparisonOpen" :filters="appliedFilters" />
+
     <section v-if="pageState === 'success' || pageState === 'empty'" class="matching-races">
       <button class="race-list-toggle" :aria-expanded="raceListOpen" @click="raceListOpen = !raceListOpen">
         当前结果包含 {{ matchingRaces.length }} 场比赛 {{ raceListOpen ? '收起' : '查看' }}
@@ -278,11 +267,6 @@ onMounted(loadData)
     <!-- Loading skeleton -->
     <template v-if="pageState === 'loading'">
       <div class="skeleton-container" role="status" aria-live="polite" aria-label="加载中">
-        <div class="skeleton-podium">
-          <div class="ui-skeleton skeleton-step step-2"></div>
-          <div class="ui-skeleton skeleton-step step-1"></div>
-          <div class="ui-skeleton skeleton-step step-3"></div>
-        </div>
         <div v-for="i in 4" :key="i" class="ui-skeleton skeleton-row"></div>
       </div>
     </template>
@@ -295,7 +279,7 @@ onMounted(loadData)
             <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5C7 4 6 7 6 9z" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5C17 4 18 7 18 9z" /><path d="M4 22h16" /><path d="M10 22V14h4v8" /><path d="M12 14c-1.5 0-3-2-3-4V7c0-1.1.9-2 2-2h2a2 2 0 0 1 2 2v3c0 2-1.5 4-3 4z" />
           </svg>
         </span>
-        <p class="ui-state-text">{{ hasActiveFilters() ? '当前筛选没有符合条件的成绩。' : '还没有人参与竞猜——成为第一个！' }}</p>
+        <p class="ui-state-text">{{ appliedSort === 'avg_points' && matchingRaces.length ? '暂无选手达到当前筛选下的 60% 参赛场次要求。' : hasActiveFilters() ? '当前筛选没有符合条件的成绩。' : '还没有人参与竞猜——成为第一个！' }}</p>
         <router-link to="/" class="ui-btn ui-btn--primary">去首页看看</router-link>
       </div>
     </template>
@@ -318,31 +302,30 @@ onMounted(loadData)
 
     <!-- Leaderboard data -->
     <template v-else>
-      <LeaderboardPodium :entries="podiumEntries" :current-username="authStore.user?.username" />
-
-      <div v-if="tableEntries.length > 0" class="table-card">
+      <div v-if="leaderboard.length > 0" class="table-card">
         <table>
           <thead>
             <tr>
               <th scope="col" class="col-rank">排名</th>
               <th scope="col" class="col-name">用户名</th>
-              <th scope="col" class="col-points">积分</th>
-              <th scope="col" class="col-gap">距榜首</th>
-              <th scope="col" class="col-gap">距上一名</th>
+              <th scope="col" class="col-points" :aria-sort="appliedSort === 'total_points' ? 'descending' : 'none'">积分</th>
+              <th scope="col" class="col-gap">{{ appliedSort === 'avg_points' ? '场均距榜首' : '距榜首' }}</th>
+              <th scope="col" class="col-gap">{{ appliedSort === 'avg_points' ? '场均距上一名' : '距上一名' }}</th>
               <th scope="col" class="col-races">场数</th>
-              <th scope="col" class="col-avg">场均</th>
+              <th scope="col" class="col-avg" :aria-sort="appliedSort === 'avg_points' ? 'descending' : 'none'">场均</th>
             </tr>
           </thead>
           <tbody>
             <LeaderboardRow
-              v-for="(entry, index) in tableEntries"
+              v-for="(entry, index) in leaderboard"
               :key="entry.username"
               :class="{ 'ui-stagger': revealing }"
-              :style="{ '--i': index + PODIUM_SIZE }"
+              :style="{ '--i': index }"
               :entry="entry"
-              :rank="index + PODIUM_SIZE + 1"
-              :leader-gap="leaderboard[0]!.total_points - entry.total_points"
-              :previous-gap="leaderboard[index + PODIUM_SIZE - 1]!.total_points - entry.total_points"
+              :rank="index + 1"
+              :leader-gap="rankingValue(leaderboard[0]!) - rankingValue(entry)"
+              :previous-gap="index > 0 ? rankingValue(leaderboard[index - 1]!) - rankingValue(entry) : 0"
+              :average-ranking="appliedSort === 'avg_points'"
               :is-current-user="entry.username === authStore.user?.username"
             />
           </tbody>
@@ -353,6 +336,7 @@ onMounted(loadData)
 </template>
 
 <style scoped>
+.average-rule { margin: 0 0 var(--spacing-4); color: var(--color-ink-secondary); font-size: 13px; line-height: 1.6; }
 .matching-races { margin: 0 0 16px; }
 .race-list-toggle { color: var(--color-primary); font-weight: 600; padding: 8px 0; }
 .race-list { background: var(--color-surface-raised); border: 1px solid var(--color-border-hairline); border-radius: var(--rounded-md); max-height: 320px; overflow-y: auto; padding: 8px 12px; }
@@ -364,10 +348,6 @@ onMounted(loadData)
 .date-error { color: var(--color-destructive); font-size: 13px; }
 th.col-gap { text-align: right; }
 .historical-import { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; font-size: 14px; }
-.historical-import label { cursor: pointer; }
-.historical-import input { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
-.historical-import label:focus-within { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-.historical-import p { width: 100%; }
 .leaderboard-page {
   padding: var(--spacing-5) var(--spacing-4);
   max-width: 960px;
@@ -568,24 +548,6 @@ th.col-gap { text-align: right; }
   gap: var(--spacing-2);
 }
 
-.skeleton-podium {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  align-items: end;
-  gap: var(--spacing-3);
-  max-width: 640px;
-  width: 100%;
-  margin: 0 auto var(--spacing-6);
-}
-
-.skeleton-step {
-  border-radius: var(--rounded-md);
-}
-
-.step-1 { height: 220px; }
-.step-2 { height: 190px; }
-.step-3 { height: 165px; }
-
 .skeleton-row {
   height: 52px;
 }
@@ -632,14 +594,6 @@ th.col-avg { text-align: right; padding-right: var(--spacing-4); }
 }
 
 @media (max-width: 767px) {
-  .skeleton-podium {
-    gap: var(--spacing-2);
-  }
-
-  .step-1 { height: 180px; }
-  .step-2 { height: 155px; }
-  .step-3 { height: 135px; }
-
   th.col-rank { width: 48px; }
 }
 

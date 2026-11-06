@@ -1,7 +1,7 @@
 /** Leaderboard API calls. */
 
 import apiClient from './client'
-import type { LeaderboardEntry, LeaderboardFilters, LeaderboardRace } from '@/types/leaderboard'
+import type { LeaderboardEntry, LeaderboardFilters, LeaderboardRace, LeaderboardSort, ComparisonParticipant, HeadToHeadResult } from '@/types/leaderboard'
 
 function filterParams(filters?: LeaderboardFilters): Record<string, string | number | string[]> {
   const params: Record<string, string | number | string[]> = {}
@@ -21,12 +21,22 @@ function filterParams(filters?: LeaderboardFilters): Record<string, string | num
   return params
 }
 
-export async function getLeaderboard(filters?: LeaderboardFilters): Promise<LeaderboardEntry[]> {
-  const response = await apiClient.get('/leaderboard', { params: filterParams(filters) })
+export async function getLeaderboard(filters?: LeaderboardFilters, sortBy: LeaderboardSort = 'total_points'): Promise<LeaderboardEntry[]> {
+  const response = await apiClient.get('/leaderboard', { params: { ...filterParams(filters), sort_by: sortBy } })
   return response.data.data as LeaderboardEntry[]
 }
 
 export async function getLeaderboardRaces(filters?: LeaderboardFilters): Promise<LeaderboardRace[]> {
   const response = await apiClient.get('/leaderboard/races', { params: filterParams(filters) })
   return response.data.data as LeaderboardRace[]
+}
+
+export async function getComparisonParticipants(): Promise<ComparisonParticipant[]> {
+  return (await apiClient.get<{ data: ComparisonParticipant[] }>('/leaderboard/participants')).data.data
+}
+
+export async function getHeadToHead(participantIds: string[], filters?: LeaderboardFilters): Promise<HeadToHeadResult> {
+  return (await apiClient.get<{ data: HeadToHeadResult }>('/leaderboard/head-to-head', {
+    params: { ...filterParams(filters), participant_id: participantIds },
+  })).data.data
 }

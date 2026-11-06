@@ -1,4 +1,5 @@
 /** Leaderboard type definitions. */
+export type LeaderboardSort = 'total_points' | 'avg_points'
 
 export interface LeaderboardEntry {
   username: string
@@ -30,4 +31,14 @@ export interface LeaderboardRace {
   name: string
   date: string
   source: 'live' | 'historical'
+}
+
+export interface ComparisonParticipant {
+  id: string
+  username: string
+  kind: 'user' | 'historical'
+}
+export interface HeadToHeadResult {
+  participants: ComparisonParticipant[]
+  races: (LeaderboardRace & { key: string; scores: number[] })[]
 }

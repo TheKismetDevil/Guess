@@ -352,3 +352,110 @@ async def test_leaderboard_endpoint_integration(
     assert data[0]["total_points"] == 20
     assert data[0]["races_participated"] == 2
     assert data[0]["avg_points"] == 10.0
+
+
+async def test_average_ranking_and_three_decimal_response(async_client, db_session):
+    from app.models.historical_score import HistoricalRace, HistoricalScore
+    for index in range(3):
+        race = HistoricalRace(name=f'平均分测试{index}', date=date(2026, 1, index + 1), age_range='3岁',
+            sex_restriction='无', race_grade='G1' if index == 0 else 'G2', country='日本',
+            surface='草地', distance=1600, horse_count=12)
+        db_session.add(race)
+        await db_session.flush()
+        db_session.add_all([HistoricalScore(race_id=race.id, qq='20002', display_name='总分更高', points=6),
+            HistoricalScore(race_id=race.id, qq='20003', display_name='负分用户', points=-1 if index == 2 else 0)])
+        if index < 2:
+            db_session.add(HistoricalScore(race_id=race.id, qq='20001', display_name='场均更高', points=7))
+    await db_session.flush()
+    base = '/api/v1/leaderboard'
+    total = (await async_client.get(base)).json()['data']
+    assert [e['username'] for e in total] == ['总分更高', '场均更高', '负分用户']
+    average = (await async_client.get(base, params={'sort_by': 'avg_points'})).json()['data']
+    assert [e['username'] for e in average] == ['场均更高', '总分更高', '负分用户']
+    assert average[-1]['avg_points'] == -0.333
+    filtered = (await async_client.get(base, params={'sort_by': 'avg_points', 'race_grade': 'G2'})).json()['data']
+    assert [e['username'] for e in filtered] == ['总分更高', '负分用户']
+    assert filtered[-1]['avg_points'] == -0.5
+    assert (await async_client.get(base, params={'sort_by': 'invalid'})).status_code == 422
+
+
+async def test_rounded_average_ties_are_sorted_using_exact_values(db_session):
+    from app.models.historical_score import HistoricalRace, HistoricalScore
+    from app.services.leaderboard_service import get_leaderboard
+    # 2/61 > 3/92; both display 0.033 and both exceed the 60% participation threshold.
+    for index in range(92):
+        race = HistoricalRace(name=f'精度测试{index}', date=date(2026, 1, 1), age_range='3岁',
+            sex_restriction='无', race_grade='G1', country='日本', surface='草地', distance=1600, horse_count=12)
+        db_session.add(race)
+        await db_session.flush()
+        db_session.add(HistoricalScore(race_id=race.id, qq='30002', display_name='总分3', points=3 if index == 0 else 0))
+        if index < 61:
+            db_session.add(HistoricalScore(race_id=race.id, qq='30001', display_name='总分2', points=2 if index == 0 else 0))
+    await db_session.flush()
+    entries = await get_leaderboard(db_session, sort_by='avg_points')
+    assert [e.username for e in entries] == ['总分2', '总分3']
+    assert [e.avg_points for e in entries] == [0.033, 0.033]
+
+
+async def test_average_uses_combined_live_and_history_scores(async_client, db_session, leaderboard_data):
+    from app.models.historical_score import HistoricalRace, HistoricalScore
+    race = HistoricalRace(name='旧成绩', date=date(2026, 1, 1), age_range='3岁', sex_restriction='无',
+        race_grade='G1', country='日本', surface='草地', distance=1600, horse_count=12)
+    db_session.add(race)
+    await db_session.flush()
+    db_session.add(HistoricalScore(race_id=race.id, qq='10002', display_name='旧昵称', points=0))
+    await db_session.flush()
+    result = (await async_client.get('/api/v1/leaderboard', params={'sort_by': 'avg_points'})).json()['data']
+    person = next(e for e in result if e['username'] == 'user1')
+    assert (person['total_points'], person['races_participated'], person['avg_points']) == (20, 3, 6.667)
+
+
+async def test_average_participation_cutoff_uses_filtered_scored_races(async_client, db_session):
+    from app.models.historical_score import HistoricalRace, HistoricalScore
+    db_session.add_all([
+        User(username='管理员', password_hash='x', qq='90000', invite_code='ADMIN', is_admin=True),
+        User(username='未参与', password_hash='x', qq='90001', invite_code='NONE'),
+    ])
+    for index in range(7):
+        race = HistoricalRace(name=f'门槛测试{index}', date=date(2026, 2, index + 1), age_range='3岁',
+            sex_restriction='无', race_grade='G1' if index < 3 else 'G2', country='日本',
+            surface='草地', distance=1600, horse_count=12)
+        db_session.add(race)
+        await db_session.flush()
+        if index < 5:
+            db_session.add(HistoricalScore(race_id=race.id, qq='91000', display_name='参加5场', points=1))
+        if index < 3:
+            db_session.add(HistoricalScore(race_id=race.id, qq='91001', display_name='恰好60%', points=0))
+        if index < 2:
+            db_session.add(HistoricalScore(race_id=race.id, qq='91002', display_name='低于60%', points=1000))
+        if index == 5:
+            db_session.add(HistoricalScore(race_id=race.id, qq='90000', display_name='管理员', points=1000))
+    await db_session.flush()
+    base = '/api/v1/leaderboard'
+    total = (await async_client.get(base)).json()['data']
+    assert total[0]['username'] == '低于60%'
+    assert '未参与' in [e['username'] for e in total]
+    races = (await async_client.get(base + '/races')).json()['data']
+    assert len(races) == 5  # Empty and admin-only races are not in the ranking's denominator.
+    averages = (await async_client.get(base, params={'sort_by': 'avg_points'})).json()['data']
+    assert [e['username'] for e in averages] == ['参加5场', '恰好60%']
+    assert averages[1]['races_participated'] == 3 and averages[1]['avg_points'] == 0
+    filtered = (await async_client.get(base, params={'sort_by': 'avg_points', 'race_grade': 'G1'})).json()['data']
+    assert filtered[0]['username'] == '低于60%'  # 2 out of 3 reaches ceil(1.8) = 2.
+    assert len(filtered) == 3
+
+
+async def test_average_denominator_is_distinct_races_not_max_user_participation(async_client, db_session):
+    from app.models.historical_score import HistoricalRace, HistoricalScore
+    for index in range(5):
+        race = HistoricalRace(name=f'各投一场{index}', date=date(2026, 3, index + 1), age_range='3岁',
+            sex_restriction='无', race_grade='G1', country='日本', surface='草地', distance=1600, horse_count=12)
+        db_session.add(race)
+        await db_session.flush()
+        db_session.add(HistoricalScore(race_id=race.id, qq=f'9200{index}', display_name=f'选手{index}', points=10))
+    await db_session.flush()
+    base = '/api/v1/leaderboard'
+    assert len((await async_client.get(base)).json()['data']) == 5
+    assert (await async_client.get(base, params={'sort_by': 'avg_points'})).json()['data'] == []
+    narrowed = (await async_client.get(base, params={'sort_by': 'avg_points', 'date_from': '2026-03-01', 'date_to': '2026-03-01'})).json()['data']
+    assert [e['username'] for e in narrowed] == ['选手0']

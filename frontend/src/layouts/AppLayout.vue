@@ -20,6 +20,7 @@ interface AdminNavItem {
 }
 
 const adminNavItems: AdminNavItem[] = [
+  { to: '/admin/historical-scores', label: '历史成绩' },
   { to: '/admin/horses', label: '马匹管理' },
   { to: '/admin/invite-codes', label: '用户管理' }
 ]

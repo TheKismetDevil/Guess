@@ -7,6 +7,8 @@ Supports filtering by race tags, horse count, and distance range.
 
 import sqlalchemy as sa
 from datetime import date
+from fractions import Fraction
+from typing import Literal
 from sqlalchemy import Numeric, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Subquery
@@ -31,12 +33,14 @@ async def get_leaderboard(
     horse_count_max: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    sort_by: Literal['total_points', 'avg_points'] = 'total_points',
 ) -> list[LeaderboardEntry]:
-    """Return all users sorted by cumulative points descending.
+    """Return all users sorted by total or average points descending.
 
     Supports filtering by race tags and numeric ranges.
     Filters apply only to settled races with points — users who have
-    no qualifying races still appear with 0 values.
+    no qualifying races still appear with 0 values in total-point mode.
+    Average mode requires participation in at least 60% of matching scored races.
     """
 
     has_filters = any([
@@ -111,7 +115,7 @@ async def get_leaderboard(
     divisor = func.nullif(func.count(func.distinct(filtered_votes.c.race_id)), 0)
     avg_points_col = func.round(
         sa.cast(sum_points / divisor, Numeric),
-        1,
+        3,
     )
 
     query = (
@@ -165,8 +169,36 @@ async def get_leaderboard(
             totals.append(entry)
         entry[1] += int(points)
         entry[2] += count
-    entries = [LeaderboardEntry(username=name, total_points=points, races_participated=count, avg_points=round(points / count, 1) if count else 0.0) for name, points, count in totals]
-    return sorted(entries, key=lambda entry: (entry.total_points, entry.avg_points), reverse=True)
+    entries = [LeaderboardEntry(username=name, total_points=points, races_participated=count, avg_points=round(points / count, 3) if count else 0.0) for name, points, count in totals]
+    if sort_by == 'avg_points':
+        matching_races = await get_matching_races(db, age_range=age_range, sex_restriction=sex_restriction,
+            race_grade=race_grade, country=country, surface=surface, distance_min=distance_min,
+            distance_max=distance_max, horse_count_min=horse_count_min, horse_count_max=horse_count_max,
+            date_from=date_from, date_to=date_to)
+        # ceil(N * 60%) using integers; the denominator matches the displayed race list.
+        minimum_races = (len(matching_races) * 3 + 4) // 5
+        entries = [entry for entry in entries if entry.races_participated >= minimum_races]
+    # Sort using the exact ratio, so display rounding cannot create false ties.
+    def ranking_key(entry):
+        average = Fraction(entry.total_points, entry.races_participated) if entry.races_participated else Fraction(0)
+        return (average, entry.total_points) if sort_by == 'avg_points' else (entry.total_points, average)
+    return sorted(entries, key=ranking_key, reverse=True)
+
+
+def filter_race_query(query, model, filters):
+    """Apply the same race conditions to race lists and head-to-head results."""
+    for key in ('age_range', 'sex_restriction', 'race_grade', 'country', 'surface'):
+        if filters.get(key):
+            query = query.where(getattr(model, key).in_(filters[key]))
+    for key, is_min in (('date_from', True), ('date_to', False)):
+        if filters.get(key) is not None:
+            query = query.where(model.date >= filters[key] if is_min else model.date <= filters[key])
+    distance = func.cast(func.regexp_replace(Race.distance, '[^0-9]', '', 'g'), sa.Integer) if model is Race else HistoricalRace.distance
+    count = select(func.count(RaceHorse.id)).where(RaceHorse.race_id == Race.id).correlate(Race).scalar_subquery() if model is Race else HistoricalRace.horse_count
+    for key, column, is_min in (('distance_min', distance, True), ('distance_max', distance, False), ('horse_count_min', count, True), ('horse_count_max', count, False)):
+        if filters.get(key) is not None:
+            query = query.where(column >= filters[key] if is_min else column <= filters[key])
+    return query
 
 
 async def get_matching_races(db: AsyncSession, include_hidden: bool = False, **filters) -> list[dict]:
@@ -174,23 +206,8 @@ async def get_matching_races(db: AsyncSession, include_hidden: bool = False, **f
     live = select(Race).where(select(Vote.id).join(User, User.id == Vote.user_id).where(Vote.race_id == Race.id, Vote.points.isnot(None), User.is_admin == False).exists())
     admin_qqs = select(User.qq).where(User.is_admin == True)
     historical = select(HistoricalRace).where(select(HistoricalScore.id).where(HistoricalScore.race_id == HistoricalRace.id, HistoricalScore.qq.not_in(admin_qqs)).exists())
-    for model, query_name in ((Race, 'live'), (HistoricalRace, 'historical')):
-        query = live if query_name == 'live' else historical
-        for key in ('age_range', 'sex_restriction', 'race_grade', 'country', 'surface'):
-            if filters.get(key):
-                query = query.where(getattr(model, key).in_(filters[key]))
-        for key, is_min in (('date_from', True), ('date_to', False)):
-            if filters.get(key) is not None:
-                query = query.where(model.date >= filters[key] if is_min else model.date <= filters[key])
-        distance = func.cast(func.regexp_replace(Race.distance, '[^0-9]', '', 'g'), sa.Integer) if model is Race else HistoricalRace.distance
-        count = select(func.count(RaceHorse.id)).where(RaceHorse.race_id == Race.id).correlate(Race).scalar_subquery() if model is Race else HistoricalRace.horse_count
-        for key, column, is_min in (('distance_min', distance, True), ('distance_max', distance, False), ('horse_count_min', count, True), ('horse_count_max', count, False)):
-            if filters.get(key) is not None:
-                query = query.where(column >= filters[key] if is_min else column <= filters[key])
-        if query_name == 'live':
-            live = query
-        else:
-            historical = query
+    live = filter_race_query(live, Race, filters)
+    historical = filter_race_query(historical, HistoricalRace, filters)
     live_races = (await db.execute(live)).scalars().all()
     historical_races = (await db.execute(historical)).scalars().all()
     items = [{'id': r.id if include_hidden or not r.is_hidden else None, 'name': r.name if include_hidden or not r.is_hidden else '未公开比赛', 'date': r.date.isoformat() if include_hidden or not r.is_hidden else '', 'source': 'live'} for r in live_races]

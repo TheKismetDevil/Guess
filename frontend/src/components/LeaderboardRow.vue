@@ -7,6 +7,7 @@ defineProps<{
   isCurrentUser: boolean
   leaderGap: number
   previousGap: number
+  averageRanking?: boolean
 }>()
 </script>
 
@@ -16,7 +17,7 @@ defineProps<{
     :class="{ 'current-user': isCurrentUser }"
     :aria-label="`第${rank}名，${entry.username}，${entry.total_points}分`"
   >
-    <td class="col-rank" :class="{ 'top-three': rank <= 3 }">
+    <td class="col-rank">
       <span class="rank-pill">{{ rank }}</span>
     </td>
     <td class="col-name">
@@ -27,10 +28,10 @@ defineProps<{
       </span>
     </td>
     <td class="col-points" :class="{ negative: entry.total_points < 0 }">{{ entry.total_points }}</td>
-    <td class="col-gap">{{ leaderGap }}</td>
-    <td class="col-gap">{{ previousGap }}</td>
+    <td class="col-gap">{{ averageRanking ? leaderGap.toFixed(3) : leaderGap }}</td>
+    <td class="col-gap">{{ averageRanking ? previousGap.toFixed(3) : previousGap }}</td>
     <td class="col-races">{{ entry.races_participated }}</td>
-    <td class="col-avg">{{ entry.avg_points.toFixed(1) }}</td>
+    <td class="col-avg">{{ entry.avg_points.toFixed(3) }}</td>
   </tr>
 </template>
 
@@ -75,11 +76,6 @@ td {
   font-weight: 700;
   color: var(--color-ink-secondary, #4A5A4A);
   background: var(--color-surface-sunken, #F1F5F0);
-}
-
-.col-rank.top-three .rank-pill {
-  color: #FFFFFF;
-  background: var(--gradient-gold);
 }
 
 .col-name {

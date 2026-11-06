@@ -1,11 +1,13 @@
 """Leaderboard API endpoint — public ranking data."""
 
 from datetime import date
+from typing import Literal
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.services import leaderboard_service
+from app.services import head_to_head_service
 from app.api.deps import get_optional_user
 
 router = APIRouter(prefix="/api/v1", tags=["leaderboard"])
@@ -30,19 +32,34 @@ def leaderboard_filters(
 
 
 @router.get("/leaderboard")
-async def get_leaderboard(db: AsyncSession = Depends(get_db), filters: dict = Depends(leaderboard_filters)):
+async def get_leaderboard(sort_by: Literal['total_points', 'avg_points'] = 'total_points',
+    db: AsyncSession = Depends(get_db), filters: dict = Depends(leaderboard_filters)):
     """Get the global leaderboard sorted by cumulative points descending.
 
     Supports optional filtering by race tags (age_range, race_grade, etc.)
     and numeric ranges (distance, horse_count). Tag filters support multi-select.
 
     Public endpoint — no authentication required.
-    Returns all users including those with zero settled races.
+    Total-point mode includes users with zero settled races. Average mode requires
+    participation in at least 60% of the scored races matching the current filters.
     """
-    entries = await leaderboard_service.get_leaderboard(db, **filters)
+    entries = await leaderboard_service.get_leaderboard(db, sort_by=sort_by, **filters)
     return {"data": [e.model_dump() for e in entries]}
 
 
 @router.get('/leaderboard/races')
 async def get_leaderboard_races(db: AsyncSession = Depends(get_db), filters: dict = Depends(leaderboard_filters), current_user=Depends(get_optional_user)):
     return {'data': await leaderboard_service.get_matching_races(db, include_hidden=bool(current_user and current_user.is_admin), **filters)}
+
+
+@router.get('/leaderboard/participants')
+async def get_comparison_participants(db: AsyncSession = Depends(get_db)):
+    return {'data': await head_to_head_service.get_participants(db)}
+
+
+@router.get('/leaderboard/head-to-head')
+async def get_head_to_head(participant_id: list[str] = Query(..., min_length=2),
+    db: AsyncSession = Depends(get_db), filters: dict = Depends(leaderboard_filters),
+    current_user=Depends(get_optional_user)):
+    return {'data': await head_to_head_service.compare(db, participant_id,
+        include_hidden=bool(current_user and current_user.is_admin), **filters)}

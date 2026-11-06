@@ -11,6 +11,6 @@ class LeaderboardEntry(BaseModel):
 
     @field_serializer("avg_points")
     def serialize_avg(self, value: float) -> float:
-        return round(value, 1)
+        return round(value, 3)
 
     model_config = {"from_attributes": True}
