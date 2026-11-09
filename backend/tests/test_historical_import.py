@@ -43,7 +43,8 @@ async def test_import_filters_and_dedup(db_session):
     assert len((await import_workbook(db_session, workbook()))['skipped_races']) == 2
     grades = {r.name: r.race_grade for r in (await db_session.execute(select(HistoricalRace))).scalars()}
     assert grades == {'测试赛': 'JPN1', '障碍赛': '自定义'}
-    assert not await get_leaderboard(db_session, race_grade=['J·G1'])
+    # Registered users stay listed with zero participation when no race matches.
+    assert [(e.total_points, e.races_participated) for e in await get_leaderboard(db_session, race_grade=['J·G1'])] == [(0, 0)]
     assert (await get_leaderboard(db_session, race_grade=['自定义']))[0].total_points == -5
     assert len((await db_session.execute(select(HistoricalScore))).scalars().all()) == 2
 
