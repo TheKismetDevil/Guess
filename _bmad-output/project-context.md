@@ -172,6 +172,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Repo initialized with initial commit `9e8be22` — `feat: project initialization scaffold`
 - `.gitignore` excludes: `node_modules/`, `__pycache__/`, `.env`, `*.pyc`, `venv/`, `.vscode/`, `.idea/`, `dist/`, `.DS_Store`
 - Story-driven: each story flows `backlog` → `ready-for-dev` → `in-progress` → `review` → `done`
+- **Branch + PR workflow**: never commit features directly to `master`. Create a short-lived branch (`feat/`, `fix/`, `refactor/`, `docs/`, `test/` + kebab-case), push to `origin`, open a PR against `master`, merge (squash) only after `.github/workflows/tests.yml` passes. Full rules in root `AGENTS.md`.
 
 **Local development:**
 - PostgreSQL: `docker compose up -d` (port 5432)
@@ -183,7 +184,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 **Production deployment:**
 - VPS + Docker Compose (Nginx reverse proxy + API + PostgreSQL)
 - Config via `.env` + Pydantic Settings
-- CI: GitHub Actions (not yet configured)
+- CI: GitHub Actions `.github/workflows/tests.yml` (runs on push and pull_request)
 
 ### Critical Don't-Miss Rules
 
