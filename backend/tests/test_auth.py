@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
 from app.core.config import settings
-from app.core.security import create_refresh_token, verify_password
+from app.core.security import create_refresh_token, get_password_hash, verify_password
 from app.main import app
-from app.models.invite_code import InviteCode
 from app.models.user import User
+from app.services.invite_code_service import get_invite_codes
 
 
 # --- Helper functions ---
@@ -24,12 +24,11 @@ async def create_user(
     is_admin: bool = False,
 ) -> User:
     """Create a test user directly in the database."""
-    from app.core.security import get_password_hash
     user = User(
         username=username,
         password_hash=get_password_hash(password),
         qq=qq,
-        invite_code=f"CODE{username[:4].upper()}",
+        invite_code=None if is_admin else f"CODE{username[:4].upper()}",
         is_admin=is_admin,
     )
     db.add(user)
@@ -37,25 +36,36 @@ async def create_user(
     return user
 
 
-async def create_unused_invite_code(db: AsyncSession) -> InviteCode:
-    """Seed an unused invite code for testing."""
-    code = InviteCode(code="TESTCODE", status="unused")
-    db.add(code)
-    await db.flush()
-    return code
-
-
-async def create_used_invite_code(db: AsyncSession) -> InviteCode:
-    """Seed a used invite code."""
-    code = InviteCode(
-        code="USEDCODE",
-        status="used",
-        bound_username="existing_user",
-        bound_qq="123456789",
+async def create_unused_invite_code(
+    db: AsyncSession,
+    qq: str = "12345678901",
+    code: str = "TESTCODE",
+) -> User:
+    """Seed an unused invite code row in ``users`` for testing."""
+    pending = User(
+        username=None,
+        password_hash=None,
+        qq=qq,
+        invite_code=code,
+        is_admin=False,
     )
-    db.add(code)
+    db.add(pending)
     await db.flush()
-    return code
+    return pending
+
+
+async def create_used_invite_code(db: AsyncSession) -> User:
+    """Seed a used invite code (an already-registered user)."""
+    used = User(
+        username="existing_user",
+        password_hash=get_password_hash("password123"),
+        qq="123456789",
+        invite_code="USEDCODE",
+        is_admin=False,
+    )
+    db.add(used)
+    await db.flush()
+    return used
 
 
 # =============================================================================
@@ -106,7 +116,7 @@ class TestRegisterErrors:
     ):
         """AC #4: Duplicate username returns error."""
         await create_user(db_session, username="existing_user", qq="22222222222")
-        await create_unused_invite_code(db_session)
+        await create_unused_invite_code(db_session, qq="12345678901")
 
         response = await async_client.post(
             "/api/v1/auth/register",
@@ -161,7 +171,7 @@ class TestRegisterSuccess:
         self, db_session: AsyncSession, async_client: AsyncClient
     ):
         """AC #1, #5: Valid registration returns 201 with tokens and user info."""
-        await create_unused_invite_code(db_session)
+        await create_unused_invite_code(db_session, qq="12345678901")
         response = await async_client.post(
             "/api/v1/auth/register",
             json={
@@ -187,11 +197,10 @@ class TestRegisterSuccess:
         assert verify_password("password123", user.password_hash)
         assert user.invite_code == "TESTCODE"
 
-        # Verify invite code is bound
-        invite_result = await db_session.execute(
-            select(InviteCode).where(InviteCode.code == "TESTCODE")
-        )
-        invite_code = invite_result.scalar_one()
+        # Verify invite code view reflects bound user
+        [invite_code] = [
+            c for c in await get_invite_codes(db_session) if c.code == "TESTCODE"
+        ]
         assert invite_code.status == "used"
         assert invite_code.bound_username == "newuser"
         assert invite_code.bound_qq == "12345678901"
@@ -201,7 +210,7 @@ class TestRegisterSuccess:
         self, db_session: AsyncSession, async_client: AsyncClient
     ):
         """Verify the returned tokens are valid JWT with correct payload."""
-        await create_unused_invite_code(db_session)
+        await create_unused_invite_code(db_session, qq="98765432109")
         response = await async_client.post(
             "/api/v1/auth/register",
             json={
@@ -309,7 +318,6 @@ class TestTokenRefresh:
     ):
         """AC #3: Valid refresh token returns new access_token."""
         user = await create_user(db_session)
-        # Create a valid refresh token
         refresh_token = create_refresh_token(data={"sub": user.username})
         response = await async_client.post(
             "/api/v1/auth/refresh",
@@ -319,7 +327,6 @@ class TestTokenRefresh:
         data = response.json()["data"]
         assert "access_token" in data
 
-        # Verify the new token is valid
         payload = jwt.decode(
             data["access_token"],
             settings.jwt_secret,
@@ -343,7 +350,6 @@ class TestTokenRefresh:
         from datetime import datetime, timedelta, timezone
         from jose import jwt as jose_jwt
 
-        # Create an already-expired token
         expire = datetime.now(timezone.utc) - timedelta(hours=1)
         payload = {"sub": "anyuser", "exp": expire}
         expired_token = jose_jwt.encode(
@@ -370,29 +376,26 @@ class TestDeps:
         self, db_session: AsyncSession, async_client: AsyncClient
     ):
         """AC #6: Authenticated request returns full User object."""
-        user = await create_user(db_session, username="authed_user")
-        # Login to get tokens
+        await create_user(db_session, username="authed_user")
         response = await async_client.post(
             "/api/v1/auth/login",
             json={"username": "authed_user", "password": "password123"},
         )
         token = response.json()["data"]["access_token"]
 
-        # Access a protected endpoint
         response = await async_client.get(
             "/api/v1/health",
             headers={"Authorization": f"Bearer {token}"},
         )
-        # /health is not protected, but we verify token is accepted
         assert response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_get_current_user_expired_token(self, async_client: AsyncClient):
         """Expired token returns 401."""
-        from datetime import datetime, timedelta, timezone
-        from jose import jwt as jose_jwt
-        from fastapi import APIRouter, Depends
         import uuid
+        from datetime import datetime, timedelta, timezone
+        from fastapi import APIRouter, Depends
+        from jose import jwt as jose_jwt
 
         expire = datetime.now(timezone.utc) - timedelta(minutes=1)
         payload = {"sub": "anyuser", "exp": expire}
@@ -421,8 +424,8 @@ class TestDeps:
     @pytest.mark.asyncio
     async def test_get_current_user_invalid_token(self, async_client: AsyncClient):
         """Invalid JWT returns 401."""
-        from fastapi import APIRouter, Depends
         import uuid
+        from fastapi import APIRouter, Depends
 
         route_tag = f"invalid_{uuid.uuid4().hex[:8]}"
         test_router = APIRouter()
@@ -445,8 +448,8 @@ class TestDeps:
     @pytest.mark.asyncio
     async def test_guest_no_token_returns_none(self, async_client: AsyncClient):
         """AC #5: Request without token passes (guest access)."""
-        from fastapi import APIRouter, Depends
         import uuid
+        from fastapi import APIRouter, Depends
 
         route_tag = f"guest_{uuid.uuid4().hex[:8]}"
         test_router = APIRouter()
@@ -477,8 +480,8 @@ class TestDeps:
         )
         token = response.json()["data"]["access_token"]
 
-        from fastapi import APIRouter, Depends
         import uuid
+        from fastapi import APIRouter, Depends
 
         route_tag = f"admin_check_{uuid.uuid4().hex[:8]}"
         test_router = APIRouter()
@@ -508,8 +511,8 @@ class TestDeps:
         )
         token = response.json()["data"]["access_token"]
 
-        from fastapi import APIRouter, Depends
         import uuid
+        from fastapi import APIRouter, Depends
 
         route_tag = f"admin_reject_{uuid.uuid4().hex[:8]}"
         test_router = APIRouter()
@@ -544,7 +547,6 @@ class TestAdminSeed:
         await seed_admin(db_session)
         await db_session.commit()
 
-        # Verify admin exists and can login
         response = await async_client.post(
             "/api/v1/auth/login",
             json={"username": "admin", "password": "admin123"},
@@ -563,16 +565,15 @@ class TestAdminSeed:
         await seed_admin(db_session)
         await db_session.commit()
 
-        # Second call
         await seed_admin(db_session)
         await db_session.commit()
 
-        # Verify only one admin
         result = await db_session.execute(
             select(User).where(User.username == "admin")
         )
         admins = result.scalars().all()
         assert len(admins) == 1
+        assert admins[0].invite_code is None
 
 
 # =============================================================================
@@ -586,26 +587,15 @@ class TestResetPassword:
     async def test_reset_password_success(
         self, db_session: AsyncSession, async_client: AsyncClient
     ):
-        """AC #1, #3: Valid username + bound invite_code + new password returns 200
-        and password is updated.
-        """
+        """AC #1, #3: Valid bound invite_code + new password returns 200 and updates password."""
         user = await create_user(db_session, username="reset_user")
-        # Create a used invite code bound to this user
-        code = InviteCode(
-            code="RESETCOD",
-            status="used",
-            bound_username="reset_user",
-            bound_qq="12345678901",
-        )
-        db_session.add(code)
-        # Create unused for first-commit balance
-        await create_unused_invite_code(db_session)
+        user.invite_code = "RESETCOD"
+        await create_unused_invite_code(db_session, qq="99999999999")
         await db_session.flush()
 
         response = await async_client.post(
             "/api/v1/auth/reset-password",
             json={
-                "username": "reset_user",
                 "invite_code": "RESETCOD",
                 "new_password": "newpassword456",
             },
@@ -614,49 +604,39 @@ class TestResetPassword:
         data = response.json()["data"]
         assert data["user"]["username"] == "reset_user"
 
-        # Verify old password no longer works
         old_login = await async_client.post(
             "/api/v1/auth/login",
             json={"username": "reset_user", "password": "password123"},
         )
         assert old_login.status_code == 401
 
-        # Verify new password works
         new_login = await async_client.post(
             "/api/v1/auth/login",
             json={"username": "reset_user", "password": "newpassword456"},
         )
         assert new_login.status_code == 200
 
-        # Verify password hash changed in DB
         result = await db_session.execute(
             select(User).where(User.username == "reset_user")
         )
         user_db = result.scalar_one()
-        from app.core.security import verify_password
         assert verify_password("newpassword456", user_db.password_hash)
         assert not verify_password("password123", user_db.password_hash)
 
     @pytest.mark.asyncio
-    async def test_reset_password_wrong_invite_code(
+    async def test_reset_password_unbound_invite_code(
         self, db_session: AsyncSession, async_client: AsyncClient
     ):
-        """AC #2: Wrong invite code returns 400 INVITE_CODE_MISMATCH."""
-        user = await create_user(db_session, username="wrong_code_user")
-        # Create invite code bound to a different user
-        code = InviteCode(
-            code="WRONGCOD",
-            status="used",
-            bound_username="other_user",
-            bound_qq="98765432109",
+        """AC #2: Unactivated/unbound invite code returns 400 INVITE_CODE_MISMATCH."""
+        await create_user(db_session, username="wrong_code_user")
+        await create_unused_invite_code(
+            db_session, qq="98765432109", code="WRONGCOD"
         )
-        db_session.add(code)
         await db_session.flush()
 
         response = await async_client.post(
             "/api/v1/auth/reset-password",
             json={
-                "username": "wrong_code_user",
                 "invite_code": "WRONGCOD",
                 "new_password": "newpassword456",
             },
@@ -669,11 +649,10 @@ class TestResetPassword:
     async def test_reset_password_nonexistent_user(
         self, async_client: AsyncClient
     ):
-        """AC #2: Non-existent user returns 400 INVITE_CODE_MISMATCH."""
+        """AC #2: Non-existent code returns 400 INVITE_CODE_MISMATCH."""
         response = await async_client.post(
             "/api/v1/auth/reset-password",
             json={
-                "username": "ghost_user",
                 "invite_code": "GHOSTCOD",
                 "new_password": "newpassword456",
             },
@@ -692,7 +671,6 @@ class TestResetPassword:
         response = await async_client.post(
             "/api/v1/auth/reset-password",
             json={
-                "username": "real_user",
                 "invite_code": "NONEXIST",
                 "new_password": "newpassword456",
             },
@@ -706,7 +684,6 @@ class TestResetPassword:
         response = await async_client.post(
             "/api/v1/auth/reset-password",
             json={
-                "username": "any_user",
                 "invite_code": "ANYCOD00",
                 "new_password": "12345",
             },

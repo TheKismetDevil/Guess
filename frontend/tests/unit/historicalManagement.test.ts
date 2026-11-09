@@ -13,7 +13,7 @@ const preview = (): ImportPreview => ({ participants: 1, imported_races: 0, impo
   conflicting_races: 1, reimported_races: 0, skipped_races: [], preview_token: 'review-1',
   options: { skip_identical: true, skip_empty: true },
   races: [{ name: '测试赛', date: '2026-01-01', race_id: 1, action: 'conflict', reason: '', score_count: 1,
-    differences: [{ kind: 'score', qq: '12345', before: { qq: '12345', display_name: '用户', points: 0 }, after: { qq: '12345', display_name: '用户', points: 8 } }] }],
+    differences: [{ kind: 'score', qq: '12345', before: { qq: '12345', points: 0 }, after: { qq: '12345', points: 8 } }] }],
 })
 
 beforeEach(() => {
@@ -87,7 +87,7 @@ describe('historical import page user flow', () => {
   })
 
   it('requires explicit confirmation before undoing a batch', async () => {
-    vi.mocked(api.getHistoryBatches).mockResolvedValue([{ id: 1, filename: '旧成绩.xlsx', created_at: '2026-01-01T00:00:00Z', undone_at: null, race_count: 2, score_count: 10, updated_races: 0 }])
+    vi.mocked(api.getHistoryBatches).mockResolvedValue([{ id: 1, filename: '旧成绩.xlsx', created_at: '2026-01-01T00:00:00Z', race_count: 2, score_count: 10, updated_races: 0 }])
     vi.mocked(api.undoHistoryBatch).mockResolvedValue({ removed_races: 2, removed_scores: 10 })
     const wrapper = await mountPage()
     await wrapper.findAll('button').find(button => button.text() === '撤销批次')!.trigger('click')

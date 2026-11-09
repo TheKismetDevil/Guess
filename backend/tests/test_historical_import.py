@@ -1,5 +1,4 @@
 from io import BytesIO
-from datetime import date
 import pytest
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import select
@@ -132,7 +131,7 @@ async def test_correct_score_updates_ranking_and_detects_stale_edit(db_session):
     assert (await history.race_scores(db_session, race['id']))[0]['points'] == 10
 
 
-async def test_undo_is_isolated_idempotent_and_allows_reimport(db_session):
+async def test_undo_is_isolated_deletes_batch_and_allows_reimport(db_session):
     first = await import_workbook(db_session, workbook())
     def rename(w):
         w['历史得分']['C1'] = '另一场'
@@ -141,13 +140,13 @@ async def test_undo_is_isolated_idempotent_and_allows_reimport(db_session):
     db_session.add(User(username='保留用户', qq='99999', password_hash='x', invite_code='keep', is_admin=False))
     await db_session.flush()
     assert await history.undo_batch(db_session, first['batch_id']) == {'removed_races': 2, 'removed_scores': 2, 'restored_races': 0}
-    assert await history.undo_batch(db_session, first['batch_id']) == {'removed_races': 0, 'removed_scores': 0, 'restored_races': 0}
+    with pytest.raises(HTTPException) as exc:
+        await history.undo_batch(db_session, first['batch_id'])
+    assert exc.value.status_code == 404
     assert len(await history.batch_races(db_session, second['batch_id'])) == 1
     assert (await db_session.execute(select(User).where(User.qq == '99999'))).scalar_one()
     batches = await history.list_batches(db_session)
-    undone = next(b for b in batches if b['id'] == first['batch_id'])
-    assert undone['undone_at'] is not None
-    assert undone['race_count'] == 2
+    assert [b['id'] for b in batches] == [second['batch_id']]
     assert (await import_workbook(db_session, workbook()))['imported_races'] == 2
 
 
@@ -211,8 +210,8 @@ async def test_changed_import_requires_explicit_decision_and_can_keep(db_session
     assert preview['conflicting_races'] == 1
     item = next(r for r in preview['races'] if r['action'] == 'conflict')
     assert item['differences'] == [{'kind': 'score', 'qq': '12345',
-        'before': {'qq': '12345', 'display_name': '旧名', 'points': 0},
-        'after': {'qq': '12345', 'display_name': '旧名', 'points': 15}}]
+        'before': {'qq': '12345', 'points': 0},
+        'after': {'qq': '12345', 'points': 15}}]
     with pytest.raises(HTTPException) as exc:
         await import_workbook(db_session, content, preview_token=preview['preview_token'])
     assert exc.value.detail['code'] == 'DECISIONS_REQUIRED'
@@ -242,7 +241,9 @@ async def test_replace_diff_metadata_and_score_then_undo_restores_original(db_se
     assert result['restored_races'] == 1 and result['removed_races'] == 0
     assert race.distance == 2000
     assert (await get_leaderboard(db_session))[0].total_points == -5
-    assert not await history.batch_races(db_session, updated['batch_id'])
+    with pytest.raises(HTTPException) as exc:
+        await history.batch_races(db_session, updated['batch_id'])
+    assert exc.value.status_code == 404
 
 
 async def test_diff_shows_removed_and_added_scores_and_zero_is_not_blank(db_session):
@@ -419,5 +420,3 @@ async def test_grade_normalization_for_steeplechase_and_dropped_grades(db_sessio
     await import_workbook(db_session, out.getvalue())
     grades = {race.name: race.race_grade for race in (await db_session.execute(select(HistoricalRace))).scalars()}
     assert grades == {'三级赛': '其他', '地方二级': '其他', '障碍自定义': '其他', '草地自定义': '自定义'}
-
-

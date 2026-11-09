@@ -57,12 +57,17 @@ def test_avatar_key_is_stable_opaque_and_hides_qq():
 
 @pytest.mark.asyncio
 async def test_avatar_endpoint_serves_and_caches_user_and_history_avatars(async_client, db_session, fake_download):
-    db_session.add(User(username='u', qq='12345', password_hash='x', invite_code='A'))
+    h_user = User(username='h', qq='77777', password_hash=None, invite_code='B')
+    db_session.add_all([
+        User(username='u', qq='12345', password_hash='x', invite_code='A'),
+        h_user,
+        User(username=None, qq='88889', password_hash=None, invite_code='C'),
+    ])
     race = HistoricalRace(name='r', date=date(2026, 1, 1), age_range='3岁', sex_restriction='无',
         race_grade='G1', country='日本', surface='草地', distance=2000, horse_count=10)
     db_session.add(race)
     await db_session.flush()
-    db_session.add(HistoricalScore(race_id=race.id, qq='77777', display_name='h', points=1))
+    db_session.add(HistoricalScore(race_id=race.id, user_id=h_user.id, points=1))
     await db_session.commit()
     for qq in ('12345', '77777', '12345'):
         response = await async_client.get(f'/api/v1/avatars/{avatar_key(qq)}')
@@ -70,6 +75,8 @@ async def test_avatar_endpoint_serves_and_caches_user_and_history_avatars(async_
         assert response.content == PNG
         assert response.headers['content-type'] == 'image/png'
         assert response.headers['cache-control'] == f'public, max-age={settings.avatar_cache_seconds}'
+    # Unnamed pending invite rows do not have public avatars yet.
+    assert (await async_client.get(f'/api/v1/avatars/{avatar_key("88889")}')).status_code == 404
     assert fake_download == ['https://q1.qlogo.cn/g?b=qq&nk=12345&s=100', 'https://q1.qlogo.cn/g?b=qq&nk=77777&s=100']
 
 
