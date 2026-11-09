@@ -336,7 +336,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **Leaderboard 筛选子查询模式**：支持按 6 个 tag 筛选（age_range/sex_restriction/race_grade/country/surface 为多选），以及 distance、horse_count 范围筛选。**CRITICAL**：筛选条件**不能**放在 `Vote LEFT JOIN Race` 的 ON 子句中——LEFT JOIN 保留所有 Vote 行，不匹配的 Race 导致 Race 列为 NULL 但 Vote.points 仍参与 SUM。正确做法：有筛选时构建 `Vote INNER JOIN Race WHERE {filters}` 子查询，无筛选时用 `Vote WHERE points IS NOT NULL` 简版子查询，然后 `User LEFT JOIN subquery ON user_id`。未命中筛选的用户仍以 0 分显示。
 - **Leaderboard 公开端点模式**：`GET /api/v1/leaderboard` 无认证依赖（FR-23 要求公开访问），路由前缀 `/api/v1`。前端 `apiClient.get('/leaderboard')` 因 baseURL 为 `/api/v1` 正确匹配。
 - **排行榜排序菜单**：`LeaderboardSortSelect.vue` 使用 `defineModel<LeaderboardSort>`，选择改变后发出 `change`。使用页面内自定义 listbox（白底、圆角、阴影、绿色选中项及勾选图标），不再使用原生 `<select>` 展开菜单。支持方向键/Home/End 导航、Enter/空格确认、Esc/Tab/点击外部/焦点离开关闭；触发器保持焦点，使用 `aria-activedescendant` 标记活动选项。
-- **LeaderboardRow 组件模式**：`LeaderboardRow.vue` 使用原生 `<tr>`/`<td>`，接收 `entry`, `rank`, `isCurrentUser`, `leaderGap`, `previousGap` props。排行榜从第 1 名开始统一使用表格，不再展示前三名领奖台或金色特殊名次；榜首的“距上一名”为 0。保留当前用户高亮、首字头像（移动端隐藏）及负分红色。
+- **LeaderboardRow 组件模式**：`LeaderboardRow.vue` 使用原生 `<tr>`/`<td>`，接收 `entry`, `rank`, `isCurrentUser`, `leaderGap`, `previousGap` props。排行榜从第 1 名开始统一使用表格，不再展示前三名领奖台或金色特殊名次；榜首的“距上一名”为 0。保留当前用户高亮、`UserAvatar` QQ 头像（移动端缩小为 22px）及负分红色。
 - **Head to Head**：排行榜使用 `HeadToHeadComparison.vue` + `useHeadToHead.ts`，选择至少两位不同用户，沿用 `appliedFilters`；`/api/v1/leaderboard/participants` 提供稳定身份，`/api/v1/leaderboard/head-to-head` 用 repeated `participant_id` 参数，返回按选择顺序排列的用户列及共同比赛逐场得分。在线场次需已结算且全部所选用户都有非空分数；历史场次按 QQ 与唯一账户关联，QQ 多账户时不自动归属历史成绩。历史身份使用不含原始 QQ 的不透明 ID。0 分/负分计入交集，未公开比赛沿用原有遮蔽规则。组件用请求序号和卸载保护阻止旧查询覆盖新结果。
 - **历史成绩管理**：管理员入口 `/admin/historical-scores`（管理菜单和排行榜均有链接）。Excel 先调用 `/api/v1/admin/historical-scores/preview` 预览，再携带 `preview_token` 确认导入；预览不写库，数据变化返回 409。`historical_import_batches` 记录批次和撤销状态，`historical_races.import_batch_id` 关联批次；迁移 017 将既有历史记录归为一个批次。历史成绩修正携带 `expected_points` 防止覆盖并发修改。导入参数 `skip_identical`/`skip_empty` 默认均为 true，页面有对应的默认勾选项；0分算有效成绩，0条成绩默认跳过。取消跳过相同记录时使用 `reimport` 更新现有比赛而不创建重复项，取消无成绩过滤时允许空比赛参与导入/差异选择；选项纳入预览令牌，切换后重新预览并清空选择。同名同日期的已导入比赛默认在资料和全部成绩完全一致时跳过；差异逐场选择 `keep`/`replace`，所有冲突必须明确选择且带有效 `preview_token`。迁移 018 的 `historical_import_changes` 保存更新前后完整快照；更新保留原始批次归属，更新批次撤销恢复快照，存在后续有效导入或人工修分冲突时阻止撤销。
 - **LeaderboardPage 模式**：`LeaderboardPage.vue` 使用 PageState 枚举（loading/empty/error/success）。success 态渲染原生 `<table>`（`<thead>`+`<th scope="col">`+`<tbody>`+`LeaderboardRow` as `<tr>`）。useDragSort composable 外的结构化表格数据优先使用原生 `<table>` 保证列对齐（与 DashboardPage、HorsesPage 一致）。empty 态条件：`data.length === 0 || data.every(e => e.races_participated === 0)`。
@@ -344,6 +344,19 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **排行榜排除 admin 模式**：`leaderboard_service.get_leaderboard()` 查询中添加 `.where(User.is_admin == False)` 过滤 admin 用户。admin 不能投票，无有效积分，不应出现在排行榜中。
 - **review 通过后的 story 状态转换**：code-review 发现被全部修复后，story 状态从 `review` → `done`。同时 sprint-status.yaml 同步更新。此流程在 code-review 工作流的 Step 6 中自动执行。
 - **catch 规范**：所有 `catch` 块必须使用 `catch (err)`（非裸 `catch`），以便区分错误类型。即使在仅设置 error 状态的简单场景中也需遵守此规范。
+
+**历史 QQ 占位用户：**
+- 历史成绩导入（`import_workbook`）完成后调用 `placeholder_user_service.ensure_placeholders()`：为写入成绩中**尚无任何账户**的 QQ 创建占位 `User`（`username` 取表格用户名，冲突时追加 `#2`、`#3`…；`password_hash` 以 `!placeholder:` 开头，永远无法登录）及一个 `unused`、`bound_qq` 为该 QQ 的邀请码；若该 QQ 已有 `unused` 邀请码则复用。导入结果返回 `placeholder_users` 数量。
+- 无需新增列/迁移：占位身份完全由 `password_hash` 前缀判断（`is_placeholder()`）。`security.verify_password()` 对 `!` 开头的哈希直接返回 False（passlib 遇到未知哈希会抛异常）。
+- 注册：`auth_service.register()` 在邀请码校验后按 QQ 查找占位用户，若存在则**原地激活**（改用户名、密码、`invite_code`，保留 `id`），否则照常新建用户。用户名唯一性检查排除被激活的占位用户本身。
+- 撤销导入或导入替换后调用 `remove_orphan_placeholders()`：删除 QQ 已无任何历史成绩的占位用户，但保留其邀请码供重新导入/注册复用；撤销恢复旧快照时会先 `ensure_placeholders`。已激活用户永不自动删除。
+- 占位用户参与排行榜/Head to Head 时与普通用户一致（`kind='user'`）；排行榜和对比中按 QQ 合并的“未匹配历史身份”分支仍保留作兜底。
+
+**QQ 头像（后端代理）：**
+- 浏览器永远拿不到原始 QQ：接口只返回 `avatar_key`（`avatar_service.avatar_key(qq)` = HMAC(`jwt_secret`, `avatar:{qq}`) 的 64 位 hex）。`LeaderboardEntry`、Head to Head 参与者、`VoteListEntry`、`UserInfo`（登录/注册/重置密码）均带 `avatar_key`。
+- `GET /api/v1/avatars/{avatar_key}`（公开）：在 `users.qq ∪ historical_scores.qq` 中反查 QQ，服务端从 `settings.qq_avatar_url`（默认 `https://q1.qlogo.cn/g?b=qq&nk={qq}&s=100`）下载，仅接受 `image/*` 且 ≤512KB；进程内缓存成功结果 6 小时、失败结果 5 分钟；响应带 `Cache-Control: public, max-age=86400`。未知 key/下载失败返回 404 `AVATAR_NOT_FOUND`。
+- 测试中通过 monkeypatch `avatar_service.download` 模拟上游，并在每例前后 `clear_cache()`；**不得**在测试中访问真实网络。
+- 前端统一用 `components/UserAvatar.vue`（props：`avatarKey`、`name`、`size`）：有 key 时加载 `/api/v1/avatars/{key}`，无 key 或图片 `error` 时回退为首字母；key 变化会重试。父组件用 class 覆盖颜色/尺寸时选择器需比 `.user-avatar` 更具体（如 `.user-chip .avatar`、`.name-cell .row-avatar`）。已用于顶栏当前用户、排行榜行、Head to Head 选择列表/已选标签/表头、投票分布投票人名单。旧 localStorage 会话没有 `avatar_key`，重新登录后才显示头像。
 
 **隐藏比赛模式：**
 - **Race 模型新增 `is_hidden` 列**：默认为 `True`（新创建比赛默认隐藏），布尔类型。迁移通过 Alembic 新增列并设置 `server_default=false`。该字段仅影响可见性，不影响投票、积分、结算等业务逻辑。
@@ -422,4 +435,4 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Review quarterly for outdated rules
 - Remove rules that become obvious over time
 
-Last Updated: 2026-11-06 (historical score management and unified leaderboard table)
+Last Updated: 2026-11-09 (historical QQ placeholder users and proxied QQ avatars)

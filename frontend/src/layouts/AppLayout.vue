@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import BrandMark from '@/components/BrandMark.vue'
+import UserAvatar from '@/components/UserAvatar.vue'
 
 const authStore = useAuthStore()
 const route = useRoute()
@@ -11,8 +12,6 @@ const router = useRouter()
 const isAdminDropdownOpen = ref(false)
 const scrollContainer = ref<HTMLElement | null>(null)
 const isScrolled = ref(false)
-
-const userInitial = computed(() => authStore.user?.username?.charAt(0).toUpperCase() ?? '')
 
 interface AdminNavItem {
   to: string
@@ -156,7 +155,7 @@ const isAdminSectionActive = computed(() => route.path.startsWith('/admin'))
         <div class="user-area">
           <template v-if="authStore.isLoggedIn">
             <span class="user-chip">
-              <span class="avatar" aria-hidden="true">{{ userInitial }}</span>
+              <UserAvatar class="avatar" :avatar-key="authStore.user?.avatar_key" :name="authStore.user?.username ?? ''" />
               <span class="username">{{ authStore.user?.username }}</span>
               <span v-if="authStore.isAdmin" class="role-tag">管理员</span>
             </span>
@@ -465,15 +464,7 @@ const isAdminSectionActive = computed(() => route.path.startsWith('/admin'))
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 
-.avatar {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  font-family: var(--font-display);
-  font-size: 14px;
-  font-weight: 700;
+.user-chip .avatar {
   color: var(--color-primary-dark);
   background: var(--gradient-gold);
 }

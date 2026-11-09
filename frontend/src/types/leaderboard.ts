@@ -6,6 +6,8 @@ export interface LeaderboardEntry {
   total_points: number
   races_participated: number
   avg_points: number
+  /** Opaque key for `/api/v1/avatars/{key}`; null when the user has no QQ avatar. */
+  avatar_key?: string | null
 }
 
 export interface LeaderboardResponse {
@@ -37,6 +39,7 @@ export interface ComparisonParticipant {
   id: string
   username: string
   kind: 'user' | 'historical'
+  avatar_key?: string | null
 }
 export interface HeadToHeadResult {
   participants: ComparisonParticipant[]

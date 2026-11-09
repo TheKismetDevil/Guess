@@ -15,6 +15,8 @@ from app.core.security import (
 )
 from app.models.invite_code import InviteCode
 from app.models.user import User
+from app.services.avatar_service import avatar_key
+from app.services.placeholder_user_service import find_placeholder
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -130,6 +132,7 @@ async def login(db: AsyncSession, request: LoginRequest) -> LoginResponse:
             username=user.username,
             qq=user.qq,
             is_admin=user.is_admin,
+            avatar_key=avatar_key(user.qq),
         ),
     )
 
@@ -206,7 +209,8 @@ async def register(
     1. Look up invite code by code string
     2. Validate invite code status is "unused"
     3. Check username uniqueness
-    4. Hash password, create User, bind invite code
+    4. Hash password, create User (or activate the QQ's placeholder user
+       created by historical import), bind invite code
     5. Generate JWT tokens, return response
     """
     # Step 1: Look up invite code
@@ -253,11 +257,12 @@ async def register(
             },
         )
 
-    # Step 3: Check username uniqueness
-    existing_user = await db.execute(
+    # Step 3: Check username uniqueness (a placeholder being activated may keep its own name)
+    placeholder = await find_placeholder(db, request.qq)
+    existing_user = (await db.execute(
         select(User).where(User.username == request.username)
-    )
-    if existing_user.scalar_one_or_none() is not None:
+    )).scalar_one_or_none()
+    if existing_user is not None and existing_user is not placeholder:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -269,15 +274,21 @@ async def register(
     # Step 4: Hash password
     password_hash = get_password_hash(request.password)
 
-    # Step 5: Create User and bind invite code atomically
-    user = User(
-        username=request.username,
-        password_hash=password_hash,
-        qq=request.qq,
-        invite_code=request.invite_code,
-        is_admin=False,
-    )
-    db.add(user)
+    # Step 5: Activate the placeholder created by historical import, or create a new User
+    if placeholder is not None:
+        user = placeholder
+        user.username = request.username
+        user.password_hash = password_hash
+        user.invite_code = request.invite_code
+    else:
+        user = User(
+            username=request.username,
+            password_hash=password_hash,
+            qq=request.qq,
+            invite_code=request.invite_code,
+            is_admin=False,
+        )
+        db.add(user)
 
     # Step 6: Bind invite code
     invite_code.status = "used"
@@ -311,6 +322,7 @@ async def register(
             username=user.username,
             qq=user.qq,
             is_admin=user.is_admin,
+            avatar_key=avatar_key(user.qq),
         ),
     )
 
@@ -372,5 +384,6 @@ async def reset_password(
             username=user.username,
             qq=user.qq,
             is_admin=user.is_admin,
+            avatar_key=avatar_key(user.qq),
         ),
     )

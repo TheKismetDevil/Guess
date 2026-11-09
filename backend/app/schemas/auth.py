@@ -45,6 +45,7 @@ class UserInfo(BaseModel):
     username: str
     qq: str
     is_admin: bool
+    avatar_key: str | None = None
 
 
 class RegisterResponse(BaseModel):

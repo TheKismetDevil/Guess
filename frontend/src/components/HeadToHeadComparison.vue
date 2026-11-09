@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { toRef } from 'vue'
 import { useHeadToHead } from '@/composables/useHeadToHead'
+import UserAvatar from '@/components/UserAvatar.vue'
 import type { ComparisonParticipant, LeaderboardFilters } from '@/types/leaderboard'
 
 const props = defineProps<{ filters: LeaderboardFilters }>()
@@ -27,12 +28,12 @@ function participantLabel(person: ComparisonParticipant) {
       <fieldset class="people-list">
         <legend class="sr-only">可多选的对比用户</legend>
         <label v-for="person in visiblePeople" :key="person.id" class="person-option" :class="{ selected: selected.includes(person.id) }">
-          <input v-model="selected" type="checkbox" :value="person.id" /><span>{{ participantLabel(person) }}</span>
+          <input v-model="selected" type="checkbox" :value="person.id" /><UserAvatar :avatar-key="person.avatar_key" :name="person.username" :size="22" /><span>{{ participantLabel(person) }}</span>
         </label>
         <p v-if="!visiblePeople.length">没有匹配的用户。</p>
       </fieldset>
       <div v-if="selectedPeople.length" class="selected-people" aria-label="已选用户">
-        <button v-for="person in selectedPeople" :key="person.id" class="selected-chip" :aria-label="`移除 ${participantLabel(person)}`" @click="removePerson(person.id)">{{ participantLabel(person) }} <span aria-hidden="true">×</span></button>
+        <button v-for="person in selectedPeople" :key="person.id" class="selected-chip" :aria-label="`移除 ${participantLabel(person)}`" @click="removePerson(person.id)"><UserAvatar :avatar-key="person.avatar_key" :name="person.username" :size="20" />{{ participantLabel(person) }} <span aria-hidden="true">×</span></button>
       </div>
     </template>
     <p v-if="state === 'idle'" class="comparison-hint" role="status">请选择至少两位用户开始对比。</p>
@@ -44,7 +45,7 @@ function participantLabel(person: ComparisonParticipant) {
       <div class="comparison-table" tabindex="0" role="region" aria-label="共同比赛逐场得分对比，可左右滚动">
         <table>
           <caption class="sr-only">每行一场共同比赛，每列一位用户的得分</caption>
-          <thead><tr><th scope="col" class="race-column">比赛</th><th v-for="person in result.participants" :key="person.id" scope="col">{{ participantLabel(person) }}</th></tr></thead>
+          <thead><tr><th scope="col" class="race-column">比赛</th><th v-for="person in result.participants" :key="person.id" scope="col"><span class="participant-head"><UserAvatar :avatar-key="person.avatar_key" :name="person.username" :size="24" />{{ participantLabel(person) }}</span></th></tr></thead>
           <tbody><tr v-for="race in result.races" :key="race.key">
             <th scope="row" class="race-column"><span class="race-date">{{ race.date || '日期未公开' }} <span v-if="race.source === 'historical'" class="history-label">历史</span></span><router-link v-if="race.source === 'live' && race.id !== null" :to="`/races/${race.id}`">{{ race.name }}</router-link><span v-else>{{ race.name }}</span></th>
             <td v-for="(score, index) in race.scores" :key="result.participants[index]!.id" :class="{ negative: score < 0, highest: score === Math.max(...race.scores) }">{{ score }}</td>
@@ -70,6 +71,7 @@ p { margin: var(--spacing-3) 0; line-height: 1.6; font-size: 14px; }
 .person-option input { accent-color: var(--color-primary); width: 16px; height: 16px; flex-shrink: 0; }
 .selected-people { display: flex; flex-wrap: wrap; gap: 8px; margin: var(--spacing-2) 0; }
 .selected-chip { display: inline-flex; gap: 10px; align-items: center; padding: 8px 12px; border-radius: var(--rounded-full); border: 1px solid var(--color-primary); background: var(--color-primary-tint); color: var(--color-primary); font-size: 14px; }
+.participant-head { display: inline-flex; align-items: center; gap: 6px; }
 .common-count { font-weight: 600; }
 .comparison-table { max-height: 600px; overflow: auto; border: 1px solid var(--color-border-hairline); border-radius: var(--rounded-md); }
 table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }

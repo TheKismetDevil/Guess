@@ -17,6 +17,7 @@ export interface VoteResponse {
 export interface VoteListEntry {
   user_id: number
   username: string
+  avatar_key?: string | null
   race_horse_id: number
   horse_name: string
   points?: number | null

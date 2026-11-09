@@ -92,6 +92,7 @@ async function confirmImport() {
   try {
     const result = await importHistory(content.value, filename.value, preview.value.preview_token, decisions.value, importOptions.value)
     message.value = `新增 ${result.imported_races} 场比赛、${result.imported_scores} 条成绩；更新 ${result.updated_races} 场；保留或跳过 ${result.skipped_races.length} 场。`
+      + (result.placeholder_users ? `已为 ${result.placeholder_users} 个未注册 QQ 创建占位用户和邀请码。` : '')
     preview.value = null
     content.value = null
     await loadBatches()

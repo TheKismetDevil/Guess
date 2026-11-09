@@ -57,7 +57,7 @@ async def test_live_and_history_are_combined_and_registered_qq_is_linked(db_sess
     assert len({r['key'] for r in result['races']}) == 3
     people = await get_participants(db_session)
     assert [p['username'] for p in people] == ['user1', 'user2', 'user3']
-    assert all(set(p) == {'id', 'username', 'kind'} for p in people)
+    assert all(set(p) == {'id', 'username', 'kind', 'avatar_key'} for p in people)
 
 
 async def test_historical_only_users_and_all_race_filters(db_session, leaderboard_data):

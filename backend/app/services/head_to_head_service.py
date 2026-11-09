@@ -1,22 +1,16 @@
 """Compare scored race intersections using stable participant identities."""
-import hashlib
-import hmac
 from collections import defaultdict
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
-from app.core.config import settings
+from app.core.security import opaque_key
 from app.models.user import User
 from app.models.vote import Vote
 from app.models.race import Race, RaceStatus
 from app.models.historical_score import HistoricalRace, HistoricalScore
+from app.services.avatar_service import avatar_key
 from app.services.leaderboard_service import filter_race_query
-
-
-def opaque_key(kind: str, value: str) -> str:
-    digest = hmac.new(settings.jwt_secret.encode(), f'{kind}:{value}'.encode(), hashlib.sha256).hexdigest()
-    return f'{kind}:{digest}'
 
 
 async def participant_catalog(db):
@@ -29,7 +23,8 @@ async def participant_catalog(db):
             continue
         by_qq[user.qq].append(user)
         key = f'user:{user.id}'
-        catalog[key] = dict(id=key, username=user.username, kind='user', user_id=user.id, history_qq=None)
+        catalog[key] = dict(id=key, username=user.username, kind='user', user_id=user.id, history_qq=None,
+            avatar_key=avatar_key(user.qq))
     for qq, matches in by_qq.items():
         if len(matches) == 1 and qq not in admin_qqs:
             catalog[f'user:{matches[0].id}']['history_qq'] = qq
@@ -39,12 +34,13 @@ async def participant_catalog(db):
         if qq in admin_qqs or len(by_qq[qq]) == 1:
             continue
         key = opaque_key('history', qq)
-        catalog[key] = dict(id=key, username=name, kind='historical', user_id=None, history_qq=qq)
+        catalog[key] = dict(id=key, username=name, kind='historical', user_id=None, history_qq=qq,
+            avatar_key=avatar_key(qq))
     return catalog
 
 
 def public_participant(item):
-    return {key: item[key] for key in ('id', 'username', 'kind')}
+    return {key: item[key] for key in ('id', 'username', 'kind', 'avatar_key')}
 
 
 async def get_participants(db):

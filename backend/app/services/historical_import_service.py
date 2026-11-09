@@ -12,6 +12,7 @@ from app.models.historical_score import HistoricalImportBatch, HistoricalImportC
 from app.models.race import Race
 from app.models.user import User
 from app.services.historical_snapshot import snapshot, current_snapshot, apply_snapshot, differences
+from app.services.placeholder_user_service import ensure_placeholders, remove_orphan_placeholders
 
 
 def invalid(message):
@@ -160,6 +161,7 @@ async def import_workbook(db, content: bytes, filename='历史得分.xlsx', prev
             imported_scores=preview['imported_scores'], updated_races=updated)
         db.add(batch)
         await db.flush()
+    people = {}
     for item in preview['races']:
         race, before, incoming = states[item['name']]
         if item['action'] == 'skip' or (item['action'] == 'conflict' and decisions[str(item['race_id'])] == 'keep'):
@@ -171,8 +173,12 @@ async def import_workbook(db, content: bytes, filename='历史得分.xlsx', prev
         else:
             db.add(HistoricalImportChange(batch_id=batch.id, race_id=race.id, before=before, after=incoming))
         await apply_snapshot(db, race, incoming)
+        people.update({score['qq']: score['display_name'] for score in incoming['scores']})
     await db.flush()
+    # Every historical QQ gets an account: placeholders are activated on registration.
+    placeholder_users = await ensure_placeholders(db, people)
+    await remove_orphan_placeholders(db)
     return {key: preview[key] for key in ('imported_races', 'imported_scores')} | {
         'updated_races': updated, 'skipped_races': preview['skipped_races'] + [r['name'] for r in preview['races']
             if r['action'] == 'conflict' and decisions[str(r['race_id'])] == 'keep'],
-        'batch_id': batch.id if batch else None}
+        'batch_id': batch.id if batch else None, 'placeholder_users': placeholder_users}
