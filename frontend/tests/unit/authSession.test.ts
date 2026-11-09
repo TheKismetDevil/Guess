@@ -51,7 +51,9 @@ describe('useAuthStore session expiry and cross-context sync', () => {
       expect(authStore.isLoggedIn).toBe(true)
 
       const renewed = makeJwt(nowSec + 1800)
-      emitAuthEvent({ type: 'token-refreshed', accessToken: renewed })
+      const stored = JSON.parse(localStorage.getItem('auth')!)
+      localStorage.setItem('auth', JSON.stringify({ ...stored, accessToken: renewed }))
+      emitAuthEvent({ type: 'token-refreshed' })
       expect(authStore.accessToken).toBe(renewed)
       expect(authStore.isAdmin).toBe(true)
 

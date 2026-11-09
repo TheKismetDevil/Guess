@@ -8,6 +8,36 @@ import { isTokenExpired } from '@/utils/jwt'
 const GUEST_PATHS = ['/login', '/register', '/reset-password']
 const AUTH_ENDPOINTS = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/reset-password']
 
+type StoredAuth = {
+  accessToken?: string
+  refreshToken?: string
+  sessionId?: string
+}
+
+interface SessionRequestConfig extends InternalAxiosRequestConfig {
+  _authSession?: string | null
+  _retry?: boolean
+}
+
+function readStoredAuth(): StoredAuth | null {
+  try {
+    return JSON.parse(localStorage.getItem('auth') ?? 'null')
+  } catch {
+    return null
+  }
+}
+
+function sessionKey(auth: StoredAuth | null): string | null {
+  // Sessions persisted before sessionId was introduced still have a stable refresh token.
+  return auth?.sessionId ?? auth?.refreshToken ?? auth?.accessToken ?? null
+}
+
+function checkSession(expected: string | null, auth = readStoredAuth()): void {
+  if (sessionKey(auth) !== expected) {
+    throw new axios.CanceledError('登录会话已变更')
+  }
+}
+
 function isGuestPath(): boolean {
   return typeof window !== 'undefined' && GUEST_PATHS.includes(window.location.pathname)
 }
@@ -25,7 +55,8 @@ function redirectToLoginWithExpiredSession(): void {
   window.location.href = `/login?session=expired&redirect=${encodeURIComponent(currentPath)}`
 }
 
-function clearStoredAuthAndRedirect(): Promise<never> {
+function clearStoredAuthAndRedirect(expected: string | null): Promise<never> {
+  checkSession(expected)
   localStorage.removeItem('auth')
   emitAuthEvent({ type: 'auth-cleared' })
   redirectToLoginWithExpiredSession()
@@ -33,39 +64,47 @@ function clearStoredAuthAndRedirect(): Promise<never> {
   return new Promise(() => {})
 }
 
-let refreshPromise: Promise<string> | null = null
+const refreshes = new Map<string, Promise<string>>()
 
-async function refreshAccessToken(currentRefreshToken: string): Promise<string> {
-  if (refreshPromise) {
-    return refreshPromise
+async function refreshAccessToken(session: string, refreshToken: string): Promise<string> {
+  const pending = refreshes.get(session)
+  if (pending) {
+    return pending
   }
 
-  refreshPromise = (async () => {
+  const refresh = (async () => {
     const res = await axios.post<{ data: { access_token: string } }>('/api/v1/auth/refresh', {
-      refresh_token: currentRefreshToken,
+      refresh_token: refreshToken,
     })
+    const latestAuth = readStoredAuth()
+    checkSession(session, latestAuth)
+
     const newToken = res.data?.data?.access_token
     if (typeof newToken !== 'string' || !newToken.trim()) {
       throw new Error('刷新令牌响应缺少 access_token')
     }
 
-    const latestStored = localStorage.getItem('auth')
-    if (latestStored) {
-      try {
-        const latestAuth = JSON.parse(latestStored)
-        latestAuth.accessToken = newToken
-        localStorage.setItem('auth', JSON.stringify(latestAuth))
-      } catch {
-        // ignore parse errors
-      }
-    }
-    emitAuthEvent({ type: 'token-refreshed', accessToken: newToken })
+    localStorage.setItem('auth', JSON.stringify({ ...latestAuth, accessToken: newToken }))
+    emitAuthEvent({ type: 'token-refreshed' })
     return newToken
   })().finally(() => {
-    refreshPromise = null
+    refreshes.delete(session)
   })
 
-  return refreshPromise
+  refreshes.set(session, refresh)
+  return refresh
+}
+
+function handleRefreshFailure(error: unknown, session: string): Promise<never> {
+  checkSession(session)
+  if (
+    axios.isAxiosError(error) &&
+    error.response?.status === 401 &&
+    error.response.data?.detail?.code === 'INVALID_REFRESH_TOKEN'
+  ) {
+    return clearStoredAuthAndRedirect(session)
+  }
+  throw error
 }
 
 const apiClient: AxiosInstance = axios.create({
@@ -86,40 +125,33 @@ const apiClient: AxiosInstance = axios.create({
 })
 
 // Request interceptor: proactively refresh expired JWT access tokens & attach Bearer header
-apiClient.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+apiClient.interceptors.request.use(async (config: SessionRequestConfig) => {
   if (isAuthEndpoint(config.url)) {
     return config
   }
 
-  const stored = localStorage.getItem('auth')
-  if (!stored) {
-    return config
+  const auth = readStoredAuth()
+  if (config._authSession !== undefined) {
+    checkSession(config._authSession, auth)
   }
-
-  let auth: { accessToken?: string; refreshToken?: string } | null = null
-  try {
-    auth = JSON.parse(stored)
-  } catch {
-    return config
-  }
+  const session = sessionKey(auth)
+  config._authSession = session
 
   if (!auth?.accessToken) {
     return config
   }
 
-  if (!isGuestPath() && isTokenExpired(auth.accessToken, 5)) {
+  if (session && !isGuestPath() && isTokenExpired(auth.accessToken, 5)) {
     if (!auth.refreshToken || isTokenExpired(auth.refreshToken)) {
-      return clearStoredAuthAndRedirect()
+      return clearStoredAuthAndRedirect(session)
     }
     try {
-      const newToken = await refreshAccessToken(auth.refreshToken)
+      const newToken = await refreshAccessToken(session, auth.refreshToken)
+      checkSession(session)
       config.headers.Authorization = `Bearer ${newToken}`
       return config
     } catch (refreshErr) {
-      if (axios.isAxiosError(refreshErr) && !refreshErr.response) {
-        return Promise.reject(refreshErr)
-      }
-      return clearStoredAuthAndRedirect()
+      return handleRefreshFailure(refreshErr, session)
     }
   }
 
@@ -131,54 +163,44 @@ apiClient.interceptors.request.use(async (config: InternalAxiosRequestConfig) =>
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config
+    const originalRequest: SessionRequestConfig | undefined = error.config
 
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && originalRequest?._authSession !== undefined) {
       // Avoid loops on auth pages/endpoints and leave the error to the caller there
       if (isGuestPath() || isAuthEndpoint(originalRequest?.url)) {
         return Promise.reject(error)
       }
 
+      const session = originalRequest._authSession
+      const auth = readStoredAuth()
+      checkSession(session, auth)
+
       // Try silent refresh once if we have a refresh token
-      if (originalRequest && !originalRequest._retry) {
+      if (!originalRequest._retry) {
         originalRequest._retry = true
-        const stored = localStorage.getItem('auth')
-        if (stored) {
-          let auth: { accessToken?: string; refreshToken?: string } | null = null
+
+        // The retry interceptor attaches the latest token for the same session.
+        if (
+          auth?.accessToken &&
+          !isTokenExpired(auth.accessToken, 5) &&
+          originalRequest.headers.Authorization &&
+          originalRequest.headers.Authorization !== `Bearer ${auth.accessToken}`
+        ) {
+          return apiClient(originalRequest)
+        }
+
+        if (session && auth?.refreshToken && !isTokenExpired(auth.refreshToken)) {
           try {
-            auth = JSON.parse(stored)
-          } catch {
-            auth = null
+            await refreshAccessToken(session, auth.refreshToken)
+          } catch (refreshErr) {
+            return handleRefreshFailure(refreshErr, session)
           }
-
-          // Reuse an already-refreshed token if a parallel request just updated localStorage
-          if (
-            auth?.accessToken &&
-            !isTokenExpired(auth.accessToken, 5) &&
-            originalRequest.headers?.Authorization &&
-            originalRequest.headers.Authorization !== `Bearer ${auth.accessToken}`
-          ) {
-            originalRequest.headers.Authorization = `Bearer ${auth.accessToken}`
-            return apiClient(originalRequest)
-          }
-
-          if (auth?.refreshToken && !isTokenExpired(auth.refreshToken)) {
-            try {
-              const newToken = await refreshAccessToken(auth.refreshToken)
-              originalRequest.headers.Authorization = `Bearer ${newToken}`
-              return apiClient(originalRequest)
-            } catch (refreshErr) {
-              if (axios.isAxiosError(refreshErr) && !refreshErr.response) {
-                return Promise.reject(refreshErr)
-              }
-              return clearStoredAuthAndRedirect()
-            }
-          }
+          return apiClient(originalRequest)
         }
       }
 
-      // No refresh token, refresh failed, or retry also failed: force login
-      return clearStoredAuthAndRedirect()
+      // No usable refresh token, or the retried request was also rejected.
+      return clearStoredAuthAndRedirect(session)
     }
 
     return Promise.reject(error)

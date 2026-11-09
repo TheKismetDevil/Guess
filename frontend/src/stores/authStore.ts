@@ -80,16 +80,15 @@ export const useAuthStore = defineStore('auth', () => {
       return
     }
 
-    sessionExpiryTimer = setTimeout(() => {
-      scheduleSessionExpiry(token)
-    }, Math.min(delay, MAX_TIMEOUT_MS))
+    sessionExpiryTimer = setTimeout(restoreSession, Math.min(delay, MAX_TIMEOUT_MS))
   }
 
   function persistAuth(data: { accessToken: string; refreshToken: string; user: UserInfo }) {
     hasPersistedSession = true
     setUser(data.user)
     setTokens(data.accessToken, data.refreshToken)
-    localStorage.setItem('auth', JSON.stringify(data))
+    const sessionId = Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-')
+    localStorage.setItem('auth', JSON.stringify({ ...data, sessionId }))
     scheduleSessionExpiry(data.refreshToken)
   }
 
@@ -153,7 +152,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const unsubscribeAuthEvents = subscribeAuthEvents((event) => {
     if (event.type === 'token-refreshed') {
-      accessToken.value = event.accessToken
+      restoreSession()
     } else if (event.type === 'auth-cleared') {
       clearMemoryState()
     }

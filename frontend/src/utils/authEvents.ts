@@ -1,7 +1,7 @@
 /** Lightweight pub/sub to keep Pinia authStore in sync with apiClient without circular imports. */
 
 export type AuthEvent =
-  | { type: 'token-refreshed'; accessToken: string }
+  | { type: 'token-refreshed' }
   | { type: 'auth-cleared' }
 
 type AuthEventListener = (event: AuthEvent) => void

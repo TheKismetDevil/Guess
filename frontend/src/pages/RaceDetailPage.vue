@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick, shallowRef } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -756,11 +756,28 @@ async function handleUpdateBestWin() {
   }
 }
 
+function showHiddenRaceError() {
+  race.value = null
+  pageState.value = 'error'
+  errorMessage.value = '当前比赛已隐藏'
+}
+
+watch(() => !isAdmin.value && race.value?.is_hidden, (hidden) => {
+  if (hidden) {
+    showHiddenRaceError()
+  }
+})
+
 async function loadRace() {
   pageState.value = 'loading'
   errorMessage.value = '加载失败，请刷新重试'
   try {
-    race.value = await getRace(raceId)
+    const detail = await getRace(raceId)
+    if (detail.is_hidden && !isAdmin.value) {
+      showHiddenRaceError()
+      return
+    }
+    race.value = detail
     pageState.value = 'success'
     revealList(race.value.horses.length)
     await loadVotes(raceId)
@@ -769,7 +786,7 @@ async function loadRace() {
     pageState.value = 'error'
     const code = err?.response?.data?.detail?.code
     if (code === 'RACE_HIDDEN') {
-      errorMessage.value = '当前比赛已隐藏'
+      showHiddenRaceError()
     }
   }
 }
@@ -1242,7 +1259,7 @@ onUnmounted(() => {
     </template>
 
     <!-- Add Horse Modal -->
-    <div v-if="showAddHorseModal" class="modal-backdrop ui-anim-overlay">
+    <div v-if="isAdmin && showAddHorseModal" class="modal-backdrop ui-anim-overlay">
       <div class="modal-content add-horse-modal ui-anim-dialog" role="dialog" aria-modal="true" aria-label="添加马匹">
         <h3 class="modal-title">添加马匹</h3>
         <p class="modal-hint">搜索马名后点选，可连续添加多匹，最后一次性提交。</p>
@@ -1262,7 +1279,7 @@ onUnmounted(() => {
 
     <!-- Delete Horse Confirm Modal -->
     <ConfirmDeleteModal
-      v-if="showDeleteConfirm && deleteTarget"
+      v-if="isAdmin && showDeleteConfirm && deleteTarget"
       title="从比赛中移除"
       :item-name="deleteTarget.name"
       message="确定将「{name}」从本场比赛中移除？此操作不可撤销。"
@@ -1273,7 +1290,7 @@ onUnmounted(() => {
 
     <!-- Lock Race Confirm Modal -->
     <ConfirmDeleteModal
-      v-if="showLockConfirm && race"
+      v-if="isAdmin && showLockConfirm && race"
       title="锁定比赛"
       :item-name="race.name"
       message="确定锁定比赛「{name}」？锁定后不可再修改闸位与马匹信息。"
@@ -1286,7 +1303,7 @@ onUnmounted(() => {
 
     <!-- Delete Race Confirm Modal -->
     <ConfirmDeleteModal
-      v-if="showDeleteRaceModal && race"
+      v-if="isAdmin && showDeleteRaceModal && race"
       title="删除比赛"
       :item-name="race.name"
       message="确定删除比赛「{name}」？此操作不可撤销，所有相关数据将被清除。"
