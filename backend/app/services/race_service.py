@@ -1,27 +1,22 @@
 """Race management business logic service."""
 
-from datetime import date
-
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.horse import Horse
 from app.models.race import Race, RaceHorse, RaceStatus
-from app.schemas.race import CustomScoring, RaceCreate, RaceUpdate
+from app.schemas.race import CustomScoring, RaceCreate, RaceHorseUpdate, RaceUpdate
 
 
 async def get_races(
-    db: AsyncSession, status_filter: str | None = None,
+    db: AsyncSession,
+    status_filter: str | None = None,
     include_hidden: bool = False,
 ) -> list[Race]:
-    """Get all races, optionally filtered by status.
-
-    Returns races ordered by date descending with horse_count and vote_count.
-    When include_hidden=False, hidden races are excluded.
-    """
+    """Get all races, optionally filtered by status."""
     stmt = (
         select(Race)
         .options(selectinload(Race.race_horses))
@@ -45,19 +40,15 @@ async def get_races(
         stmt = stmt.where(Race.status == valid_status)
 
     result = await db.execute(stmt)
-    races = list(result.scalars().all())
-
-    return races
+    return list(result.scalars().all())
 
 
 async def get_race(
-    db: AsyncSession, race_id: int, include_hidden: bool = False,
+    db: AsyncSession,
+    race_id: int,
+    include_hidden: bool = False,
 ) -> Race | None:
-    """Get a single race by ID with horses eagerly loaded.
-
-    When include_hidden=False, hidden races are treated as not found
-    for non-admin users (the endpoint layer should handle this check).
-    """
+    """Get a single race by ID with horses eagerly loaded."""
     stmt = (
         select(Race)
         .options(selectinload(Race.race_horses))
@@ -70,6 +61,7 @@ async def get_race(
 async def get_race_vote_count(db: AsyncSession, race_id: int) -> int:
     """Get the number of votes for a race."""
     from app.models.vote import Vote
+
     stmt = select(func.count(Vote.id)).where(Vote.race_id == race_id)
     result = await db.execute(stmt)
     return result.scalar() or 0
@@ -121,8 +113,8 @@ def validate_custom_scoring(
         )
 
 
-def _build_snapshot(horse: Horse, weight: str | None = None, jockey: str | None = None) -> dict:
-    """Build a snapshot dict from a Horse ORM object and per-race weight/jockey."""
+def _build_snapshot(horse: Horse) -> dict:
+    """Build a snapshot dict from a Horse ORM object."""
     return {
         "name": horse.name,
         "sex": horse.sex,
@@ -140,19 +132,10 @@ def _build_snapshot(horse: Horse, weight: str | None = None, jockey: str | None 
     }
 
 
-async def create_race(
-    db: AsyncSession, data: RaceCreate, creator_id: int
-) -> Race:
-    """Create a new race with horse snapshots.
-
-    Validates:
-    - At least 2 horses when horses are provided
-    - All horse IDs exist
-    - Custom scoring valid for CUSTOM grade
-    """
+async def create_race(db: AsyncSession, data: RaceCreate) -> Race:
+    """Create a new race with horse snapshots."""
     horse_ids = data.horse_ids or []
 
-    # Validate at least 2 horses only when horses are provided
     if len(horse_ids) > 0 and len(horse_ids) < 2:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -162,14 +145,9 @@ async def create_race(
             },
         )
 
-    # Validate custom scoring if race_grade is 自定义
     if data.race_grade == "自定义":
         validate_custom_scoring(data.custom_scoring, horse_count=len(horse_ids))
-    elif data.custom_scoring is not None:
-        # Custom scoring provided for non-自定义 grade → ignore
-        pass
 
-    # Create race record
     custom_scoring_dict = (
         data.custom_scoring.model_dump() if data.custom_scoring else None
     )
@@ -185,7 +163,6 @@ async def create_race(
         status=RaceStatus.VOTING,
         custom_scoring=custom_scoring_dict,
         is_hidden=data.is_hidden,
-        creator_id=creator_id,
     )
     db.add(race)
 
@@ -201,7 +178,6 @@ async def create_race(
             },
         )
 
-    # Fetch each horse and create snapshot
     for index, horse_id in enumerate(horse_ids):
         horse = await db.get(Horse, horse_id)
         if not horse:
@@ -214,15 +190,16 @@ async def create_race(
                 },
             )
 
-        # Get per-horse weight/jockey from request, fallback to None
-        w = data.horse_weights.get(str(horse_id)) or data.horse_weights.get(horse_id) if data.horse_weights else None
-        j = data.horse_jockeys.get(str(horse_id)) or data.horse_jockeys.get(horse_id) if data.horse_jockeys else None
+        j = (
+            data.horse_jockeys.get(str(horse_id)) or data.horse_jockeys.get(horse_id)
+            if data.horse_jockeys
+            else None
+        )
 
         race_horse = RaceHorse(
             race_id=race.id,
             horse_id=horse.id,
-            snapshot_data=_build_snapshot(horse, weight=w, jockey=j),
-            weight=w,
+            snapshot_data=_build_snapshot(horse),
             jockey=j,
             gate=index + 1,
         )
@@ -234,15 +211,9 @@ async def create_race(
 
 
 async def update_race(
-    db: AsyncSession, race_id: int, data: RaceUpdate, user_id: int
+    db: AsyncSession, race_id: int, data: RaceUpdate
 ) -> Race:
-    """Update an existing race. Only voting races can be edited.
-
-    Rules:
-    - Locked/settled races are rejected
-    - If race has votes, grade cannot be changed
-    - New horses get snapshots; removed horses' votes stay
-    """
+    """Update an existing race. Only voting races can be edited."""
     race = await get_race(db, race_id)
     if race is None:
         raise HTTPException(
@@ -250,7 +221,6 @@ async def update_race(
             detail={"code": "NOT_FOUND", "message": "比赛不存在"},
         )
 
-    # Check race status — only voting races can be edited
     if race.status != RaceStatus.VOTING:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -261,12 +231,17 @@ async def update_race(
         )
 
     update_data = data.model_dump(exclude_unset=True)
-    # Filter out None values to prevent overwriting DB fields with null
     update_data = {k: v for k, v in update_data.items() if v is not None}
 
-    # Check if race has votes (vote_count > 0 → grade is locked)
     vote_count = await get_race_vote_count(db, race_id)
-    lockable_tags = {"age_range", "sex_restriction", "race_grade", "country", "distance", "surface"}
+    lockable_tags = {
+        "age_range",
+        "sex_restriction",
+        "race_grade",
+        "country",
+        "distance",
+        "surface",
+    }
     if vote_count > 0 and lockable_tags & update_data.keys():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -276,23 +251,29 @@ async def update_race(
             },
         )
 
-    # Update scalar fields
     if "name" in update_data:
         race.name = update_data["name"]
     if "date" in update_data:
         race.date = update_data["date"]
 
-    # Update race tag fields
-    for tag_field in ("age_range", "sex_restriction", "race_grade", "country", "distance", "surface"):
+    for tag_field in (
+        "age_range",
+        "sex_restriction",
+        "race_grade",
+        "country",
+        "distance",
+        "surface",
+    ):
         if tag_field in update_data:
             setattr(race, tag_field, update_data[tag_field])
 
-    # Handle custom scoring when race_grade changes to/from 自定义
     if "race_grade" in update_data:
         if update_data["race_grade"] == "自定义":
             if "custom_scoring" in update_data:
                 scoring = update_data["custom_scoring"]
-                validate_custom_scoring(CustomScoring(**scoring), horse_count=len(race.race_horses))
+                validate_custom_scoring(
+                    CustomScoring(**scoring), horse_count=len(race.race_horses)
+                )
                 race.custom_scoring = scoring
             else:
                 raise HTTPException(
@@ -305,39 +286,22 @@ async def update_race(
         else:
             race.custom_scoring = None
 
-    # Update per-horse weight/jockey if provided (keyed by race_horse_id)
-    if "horse_weights" in update_data:
-        weights = update_data["horse_weights"]
-        for rh in race.race_horses:
-            w = weights.get(str(rh.id)) or weights.get(rh.id)
-            if w is not None:
-                rh.weight = w
-                # Also update snapshot_data for backward compat
-                snap = dict(rh.snapshot_data)
-                snap["weight"] = w
-                rh.snapshot_data = snap
-
     if "horse_jockeys" in update_data:
         jockeys = update_data["horse_jockeys"]
         for rh in race.race_horses:
             j = jockeys.get(str(rh.id)) or jockeys.get(rh.id)
             if j is not None:
                 rh.jockey = j
-                # Also update snapshot_data for backward compat
-                snap = dict(rh.snapshot_data)
-                snap["jockey"] = j
-                rh.snapshot_data = snap
 
-    # Update horse list if provided
     if "horse_ids" in update_data:
         new_horse_ids = set(update_data["horse_ids"])
         existing_ids = {rh.horse_id for rh in race.race_horses}
+        new_jockeys = (
+            update_data.get("horse_jockeys", {})
+            if "horse_jockeys" in update_data
+            else {}
+        )
 
-        # Get weights/jockeys from update data for new horses
-        new_weights = update_data.get("horse_weights", {}) if "horse_weights" in update_data else {}
-        new_jockeys = update_data.get("horse_jockeys", {}) if "horse_jockeys" in update_data else {}
-
-        # Add new horses
         for horse_id in new_horse_ids - existing_ids:
             horse = await db.get(Horse, horse_id)
             if not horse:
@@ -348,22 +312,25 @@ async def update_race(
                         "message": f"马匹 {horse_id} 不存在",
                     },
                 )
-            w = new_weights.get(str(horse_id)) or new_weights.get(horse_id) if isinstance(new_weights, dict) else None
-            j = new_jockeys.get(str(horse_id)) or new_jockeys.get(horse_id) if isinstance(new_jockeys, dict) else None
+            j = (
+                new_jockeys.get(str(horse_id)) or new_jockeys.get(horse_id)
+                if isinstance(new_jockeys, dict)
+                else None
+            )
             race_horse = RaceHorse(
                 race_id=race.id,
                 horse_id=horse.id,
-                snapshot_data=_build_snapshot(horse, weight=w, jockey=j),
-                weight=w,
+                snapshot_data=_build_snapshot(horse),
                 jockey=j,
             )
             db.add(race_horse)
 
-        # Remove horses that are no longer in the list
-        removed_rhs = [rh for rh in race.race_horses if rh.horse_id not in new_horse_ids]
+        removed_rhs = [
+            rh for rh in race.race_horses if rh.horse_id not in new_horse_ids
+        ]
         if removed_rhs:
-            # Check if any removed horse has existing votes
             from app.models.vote import Vote
+
             removed_rh_ids = [rh.id for rh in removed_rhs]
             vote_stmt = select(func.count(Vote.id)).where(
                 Vote.race_id == race_id,
@@ -383,7 +350,6 @@ async def update_race(
                 await db.delete(rh)
 
     await db.flush()
-    # Re-query with eagerly loaded relationships
     race = await get_race(db, race.id)
     return race
 
@@ -392,7 +358,6 @@ async def add_horse_to_race(
     db: AsyncSession,
     race_id: int,
     horse_id: int,
-    weight: str | None = None,
     jockey: str | None = None,
 ) -> RaceHorse:
     """Add a single horse to a voting race."""
@@ -435,8 +400,7 @@ async def add_horse_to_race(
     race_horse = RaceHorse(
         race_id=race.id,
         horse_id=horse.id,
-        snapshot_data=_build_snapshot(horse, weight=weight, jockey=jockey),
-        weight=weight,
+        snapshot_data=_build_snapshot(horse),
         jockey=jockey,
         gate=max_gate + 1,
     )
@@ -450,10 +414,9 @@ async def update_race_horse(
     db: AsyncSession,
     race_id: int,
     race_horse_id: int,
-    weight: str | None = None,
-    jockey: str | None = None,
+    data: RaceHorseUpdate,
 ) -> RaceHorse:
-    """Update per-race weight/jockey for a single RaceHorse."""
+    """Update per-race jockey for a single RaceHorse."""
     race = await get_race(db, race_id)
     if race is None:
         raise HTTPException(
@@ -469,7 +432,9 @@ async def update_race_horse(
             },
         )
 
-    race_horse = next((rh for rh in race.race_horses if rh.id == race_horse_id), None)
+    race_horse = next(
+        (rh for rh in race.race_horses if rh.id == race_horse_id), None
+    )
     if race_horse is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -479,19 +444,10 @@ async def update_race_horse(
             },
         )
 
-    if weight is not None:
-        race_horse.weight = weight
-        snap = dict(race_horse.snapshot_data)
-        snap["weight"] = weight
-        race_horse.snapshot_data = snap
-    if jockey is not None:
-        race_horse.jockey = jockey
-        snap = dict(race_horse.snapshot_data)
-        snap["jockey"] = jockey
-        race_horse.snapshot_data = snap
-
-    await db.flush()
-    await db.refresh(race_horse)
+    if "jockey" in data.model_fields_set:
+        race_horse.jockey = data.jockey
+        await db.flush()
+        await db.refresh(race_horse)
     return race_horse
 
 
@@ -517,7 +473,9 @@ async def refresh_race_horse_snapshot(
             },
         )
 
-    race_horse = next((rh for rh in race.race_horses if rh.id == race_horse_id), None)
+    race_horse = next(
+        (rh for rh in race.race_horses if rh.id == race_horse_id), None
+    )
     if race_horse is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -548,10 +506,7 @@ async def update_gate_order(
     race_id: int,
     order: list[int],
 ) -> Race:
-    """Update gate numbers for all race horses based on the provided order.
-
-    order: list of race_horse_id in the desired gate order.
-    """
+    """Update gate numbers for all race horses based on the provided order."""
     race = await get_race(db, race_id)
     if race is None:
         raise HTTPException(
@@ -591,7 +546,6 @@ async def remove_horse_from_race(
     race_horse_id: int,
 ) -> None:
     """Remove a single horse from a voting race. Admin only."""
-
     race = await get_race(db, race_id)
     if race is None:
         raise HTTPException(
@@ -608,14 +562,15 @@ async def remove_horse_from_race(
             },
         )
 
-    race_horse = next((rh for rh in race.race_horses if rh.id == race_horse_id), None)
+    race_horse = next(
+        (rh for rh in race.race_horses if rh.id == race_horse_id), None
+    )
     if race_horse is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "RACE_HORSE_NOT_FOUND", "message": "比赛马匹不存在"},
         )
 
-    # Check if the horse has existing votes
     from app.models.vote import Vote
 
     vote_stmt = select(func.count(Vote.id)).where(
@@ -672,15 +627,3 @@ async def toggle_race_hidden(db: AsyncSession, race_id: int) -> Race:
     await db.flush()
     await db.refresh(race, ["race_horses"])
     return race
-
-
-# ===== Auto-Update Hook (Story 2.5) =====
-# TODO(Epic 3): Call auto_update_service.apply_auto_updates() after settlement.
-#   The caller MUST wrap this call in the same transaction as the settlement logic.
-#   apply_auto_updates() performs db.flush() internally; if an error occurs,
-#   the outer transaction rollback will undo all changes.
-# Usage:
-#   auto_update_service.apply_auto_updates(db, race_id, horse_updates)
-#   Where horse_updates = {horse_id: {field: value}} assembled by result settlement logic.
-# EXTENSION POINT: Register field-specific update rules here.
-# =========================================

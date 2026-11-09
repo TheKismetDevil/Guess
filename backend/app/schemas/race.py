@@ -2,8 +2,7 @@
 
 from datetime import date as date_type, datetime
 
-from pydantic import BaseModel, field_validator, field_serializer
-from sqlalchemy.orm import InstrumentedAttribute
+from pydantic import BaseModel, field_validator
 
 
 class HorseSnapshot(BaseModel):
@@ -39,10 +38,9 @@ class RaceCreate(BaseModel):
     sex_restriction: str
     race_grade: str
     country: str
-    distance: str
+    distance: int
     surface: str
     horse_ids: list[int] | None = None
-    horse_weights: dict[int, str] | None = None  # horse_id → weight
     horse_jockeys: dict[int, str] | None = None  # horse_id → jockey
     custom_scoring: CustomScoring | None = None
     is_hidden: bool = True
@@ -86,12 +84,19 @@ class RaceCreate(BaseModel):
             raise ValueError(f"无效的国家或地区，允许的值: {', '.join(allowed)}")
         return v
 
+    @field_validator("distance", mode="before")
+    @classmethod
+    def reject_bool_distance(cls, v):
+        if isinstance(v, bool):
+            raise ValueError("距离必须为正整数（米）")
+        return v
+
     @field_validator("distance")
     @classmethod
-    def validate_distance(cls, v: str) -> str:
-        if len(v) < 1 or len(v) > 50:
-            raise ValueError("长度需在 1-50 个字符之间")
-        return v.strip()
+    def validate_distance(cls, v: int) -> int:
+        if v <= 0 or v > 2147483647:
+            raise ValueError("距离必须为正整数（米）")
+        return v
 
     @field_validator("surface")
     @classmethod
@@ -119,10 +124,9 @@ class RaceUpdate(BaseModel):
     sex_restriction: str | None = None
     race_grade: str | None = None
     country: str | None = None
-    distance: str | None = None
+    distance: int | None = None
     surface: str | None = None
     horse_ids: list[int] | None = None
-    horse_weights: dict[int, str] | None = None  # race_horse_id → weight
     horse_jockeys: dict[int, str] | None = None  # race_horse_id → jockey
     custom_scoring: CustomScoring | None = None
 
@@ -171,13 +175,18 @@ class RaceUpdate(BaseModel):
                 raise ValueError(f"无效的国家或地区，允许的值: {', '.join(allowed)}")
         return v
 
+    @field_validator("distance", mode="before")
+    @classmethod
+    def reject_bool_distance(cls, v):
+        if isinstance(v, bool):
+            raise ValueError("距离必须为正整数（米）")
+        return v
+
     @field_validator("distance")
     @classmethod
-    def validate_distance(cls, v: str | None) -> str | None:
-        if v is not None:
-            if len(v) < 1 or len(v) > 50:
-                raise ValueError("长度需在 1-50 个字符之间")
-            return v.strip()
+    def validate_distance(cls, v: int | None) -> int | None:
+        if v is not None and (v <= 0 or v > 2147483647):
+            raise ValueError("距离必须为正整数（米）")
         return v
 
     @field_validator("surface")
@@ -201,13 +210,11 @@ class RaceUpdate(BaseModel):
 
 
 class RaceHorseUpdate(BaseModel):
-    weight: str | None = None
     jockey: str | None = None
 
 
 class AddRaceHorseRequest(BaseModel):
     horse_id: int
-    weight: str | None = None
     jockey: str | None = None
 
 
@@ -228,7 +235,6 @@ class RaceHorseResponse(BaseModel):
     snapshot_data: HorseSnapshot
     position: int | None = None
     gate: int | None = None
-    weight: str | None = None
     jockey: str | None = None
 
     model_config = {"from_attributes": True}
@@ -242,7 +248,7 @@ class RaceListResponse(BaseModel):
     sex_restriction: str
     race_grade: str
     country: str
-    distance: str
+    distance: int
     surface: str
     status: str
     custom_scoring: CustomScoring | None = None
@@ -263,7 +269,7 @@ class RaceDetailResponse(BaseModel):
     sex_restriction: str
     race_grade: str
     country: str
-    distance: str
+    distance: int
     surface: str
     status: str
     custom_scoring: CustomScoring | None = None
@@ -272,6 +278,5 @@ class RaceDetailResponse(BaseModel):
     horse_votes: dict | None = None  # populated for settled races
     vote_count: int
     created_at: datetime
-    updated_at: datetime
 
     model_config = {"from_attributes": True}

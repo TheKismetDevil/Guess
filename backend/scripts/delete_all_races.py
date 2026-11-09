@@ -1,5 +1,5 @@
 """
-One-time script to delete all races (cascades to race_horses, votes, score_change_logs).
+One-time script to delete all races (cascades to race_horses and votes).
 
 Usage:
     cd backend
@@ -9,7 +9,6 @@ WARNING: This will delete ALL race data including:
   - Races
   - RaceHorses (per-race horse entries)
   - Votes (all user votes)
-  - ScoreChangeLogs (audit trail)
 """
 
 import asyncio
@@ -30,7 +29,6 @@ async def main() -> None:
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with session_factory() as db:
-        # Count existing races
         result = await db.execute(select(Race))
         races = list(result.scalars().all())
 
@@ -42,13 +40,11 @@ async def main() -> None:
         for r in races:
             print(f"  - #{r.id}: {r.name} ({r.date})")
 
-        # Confirm
         confirm = input(f"\nDelete all {len(races)} races? This CANNOT be undone. Type 'yes': ")
         if confirm != "yes":
             print("[ABORT] Deletion cancelled.")
             return
 
-        # Delete all races (cascades to race_horses, votes, score_change_logs)
         for race in races:
             await db.delete(race)
 

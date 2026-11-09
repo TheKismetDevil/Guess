@@ -1,13 +1,13 @@
 """Tests for race CRUD service and API endpoints."""
 
-from datetime import date, datetime
+from datetime import date
 
 import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_admin
+from app.api.deps import get_current_admin, get_db
 from app.main import app
 from app.models.horse import Horse
 from app.models.race import RaceStatus
@@ -19,7 +19,7 @@ _DEFAULT_TAGS = {
     "sex_restriction": "无",
     "race_grade": "G1",
     "country": "日本",
-    "distance": "1200m",
+    "distance": 1200,
     "surface": "草地",
 }
 
@@ -40,7 +40,7 @@ def _make_race_json(name: str, date_str: str, **overrides) -> dict:
         "sex_restriction": "无",
         "race_grade": "G1",
         "country": "日本",
-        "distance": "1200m",
+        "distance": 1200,
         "surface": "草地",
     }
     payload.update(overrides)
@@ -66,8 +66,6 @@ SAMPLE_HORSE = {
     "origin": "日本",
     "sire": "Kitasan Black",
     "damsire": "Dance in the Dark",
-    "weight": "520kg",
-    "jockey": "C. Lemaire",
     "previous_result": "1着",
     "best_win": "有马纪念(G1)",
 }
@@ -91,8 +89,8 @@ class TestRaceService:
 
     @pytest.mark.asyncio
     async def test_create_race(self, db_session: AsyncSession):
-        from app.services.race_service import create_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -103,7 +101,7 @@ class TestRaceService:
             **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
         )
-        race = await create_race(db_session, data, creator_id=1)
+        race = await create_race(db_session, data)
 
         assert race.id is not None
         assert race.name == "日本德比"
@@ -111,11 +109,11 @@ class TestRaceService:
         assert race.age_range == "其他"
         assert race.sex_restriction == "无"
         assert race.country == "日本"
-        assert race.distance == "1200m"
+        assert race.distance == 1200
         assert race.status.value == "voting"
+        assert race.is_hidden is True
         assert len(race.race_horses) == 2
 
-        # Verify snapshot data
         for rh in race.race_horses:
             assert rh.snapshot_data is not None
             assert rh.snapshot_data["name"] in ["Equinox", "Epiphaneia"]
@@ -126,8 +124,8 @@ class TestRaceService:
 
     @pytest.mark.asyncio
     async def test_create_race_custom_grade(self, db_session: AsyncSession):
+        from app.schemas.race import CustomScoring, PenaltyRule, RaceCreate
         from app.services.race_service import create_race
-        from app.schemas.race import RaceCreate, CustomScoring, PenaltyRule
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -142,7 +140,7 @@ class TestRaceService:
                 penalty_rules=[PenaltyRule(position=-1, points=-5)],
             ),
         )
-        race = await create_race(db_session, data, creator_id=1)
+        race = await create_race(db_session, data)
 
         assert race.custom_scoring is not None
         assert race.custom_scoring["positive_scores"] == [10, 7, 5, 3, 2, 1]
@@ -152,8 +150,9 @@ class TestRaceService:
 
     @pytest.mark.asyncio
     async def test_create_race_insufficient_horses(self, db_session: AsyncSession):
-        from app.schemas.race import RaceCreate
         from pydantic import ValidationError
+
+        from app.schemas.race import RaceCreate
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
 
@@ -169,8 +168,8 @@ class TestRaceService:
 
     @pytest.mark.asyncio
     async def test_get_races(self, db_session: AsyncSession):
-        from app.services.race_service import create_race, get_races
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race, get_races
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -179,16 +178,15 @@ class TestRaceService:
         await create_race(db_session, RaceCreate(
             name="Race1", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
         await create_race(db_session, RaceCreate(
             name="Race2", date=date(2026, 6, 20), **_make_race_kwargs(race_grade="G2"),
             horse_ids=[h2.id, h3.id],
-        ), creator_id=1)
+        ))
 
         races = await get_races(db_session, include_hidden=True)
         assert len(races) == 2
 
-        # Test status filter
         races_voting = await get_races(db_session, status_filter="voting", include_hidden=True)
         assert len(races_voting) == 2
 
@@ -196,8 +194,8 @@ class TestRaceService:
 
     @pytest.mark.asyncio
     async def test_get_race(self, db_session: AsyncSession):
-        from app.services.race_service import create_race, get_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race, get_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -205,7 +203,7 @@ class TestRaceService:
         created = await create_race(db_session, RaceCreate(
             name="FindMe", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
 
         found = await get_race(db_session, created.id)
         assert found is not None
@@ -219,8 +217,8 @@ class TestRaceService:
 
     @pytest.mark.asyncio
     async def test_update_race_name(self, db_session: AsyncSession):
-        from app.services.race_service import create_race, get_race, update_race
         from app.schemas.race import RaceCreate, RaceUpdate
+        from app.services.race_service import create_race, update_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -228,18 +226,20 @@ class TestRaceService:
         created = await create_race(db_session, RaceCreate(
             name="Original", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
 
-        updated = await update_race(db_session, created.id, RaceUpdate(name="Updated"), user_id=1)
+        updated = await update_race(db_session, created.id, RaceUpdate(name="Updated"))
         assert updated.name == "Updated"
 
         await db_session.rollback()
 
     @pytest.mark.asyncio
     async def test_delete_race(self, db_session: AsyncSession):
-        from app.services.race_service import create_race, delete_race, get_race
-        from app.schemas.race import RaceCreate
         from sqlalchemy import select
+
+        from app.models.race import RaceHorse
+        from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race, delete_race, get_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -247,15 +247,13 @@ class TestRaceService:
         created = await create_race(db_session, RaceCreate(
             name="DeleteMe", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
 
         await delete_race(db_session, created.id)
 
         found = await get_race(db_session, created.id)
         assert found is None
 
-        # Verify cascade delete of race_horses
-        from app.models.race import RaceHorse
         result = await db_session.execute(
             select(RaceHorse).where(RaceHorse.race_id == created.id)
         )
@@ -266,8 +264,8 @@ class TestRaceService:
 
     @pytest.mark.asyncio
     async def test_delete_race_settled(self, db_session: AsyncSession):
-        from app.services.race_service import create_race, delete_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race, delete_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -275,9 +273,8 @@ class TestRaceService:
         created = await create_race(db_session, RaceCreate(
             name="SettledRace", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
 
-        # Manually set status to SETTLED to simulate settled race
         created.status = RaceStatus.SETTLED
         await db_session.flush()
 
@@ -306,15 +303,15 @@ class TestRaceAPI:
 
     @pytest.mark.asyncio
     async def test_list_races_api(self, db_session: AsyncSession):
-        from app.services.race_service import create_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
         await create_race(db_session, RaceCreate(
             name="API Race", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id], is_hidden=False,
-        ), creator_id=1)
+        ))
 
         app.dependency_overrides[get_db] = lambda: db_session
 
@@ -349,8 +346,9 @@ class TestRaceAPI:
             assert data["data"]["age_range"] == "其他"
             assert data["data"]["sex_restriction"] == "无"
             assert data["data"]["country"] == "日本"
-            assert data["data"]["distance"] == "1200m"
+            assert data["data"]["distance"] == 1200
             assert data["data"]["status"] == "voting"
+            assert data["data"]["is_hidden"] is True
             assert len(data["data"]["horses"]) == 2
 
         app.dependency_overrides.clear()
@@ -383,9 +381,6 @@ class TestRaceAPI:
 
     @pytest.mark.asyncio
     async def test_get_race_detail_api(self, db_session: AsyncSession):
-        from app.services.race_service import create_race
-        from app.schemas.race import RaceCreate
-
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
 
@@ -412,9 +407,6 @@ class TestRaceAPI:
 
     @pytest.mark.asyncio
     async def test_update_race_api(self, db_session: AsyncSession):
-        from app.services.race_service import create_race
-        from app.schemas.race import RaceCreate
-
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
 
@@ -431,9 +423,11 @@ class TestRaceAPI:
 
             resp = await client.patch(f"/api/v1/races/{race_id}", json={
                 "name": "NewName",
+                "distance": 1600,
             })
             assert resp.status_code == 200
             assert resp.json()["data"]["name"] == "NewName"
+            assert resp.json()["data"]["distance"] == 1600
             for dropped_grade in ("G3", "JPN2"):
                 bad_patch = await client.patch(f"/api/v1/races/{race_id}", json={"race_grade": dropped_grade})
                 assert bad_patch.status_code == 422
@@ -444,9 +438,6 @@ class TestRaceAPI:
 
     @pytest.mark.asyncio
     async def test_delete_race_api(self, db_session: AsyncSession):
-        from app.services.race_service import create_race
-        from app.schemas.race import RaceCreate
-
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
 
@@ -487,8 +478,8 @@ class TestRaceAPI:
     @pytest.mark.asyncio
     async def test_delete_settled_race_api(self, db_session: AsyncSession):
         """DELETE settled race → 400."""
-        from app.services.race_service import create_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -496,7 +487,7 @@ class TestRaceAPI:
         created = await create_race(db_session, RaceCreate(
             name="SettledDelete", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
         created.status = RaceStatus.SETTLED
         await db_session.flush()
 
@@ -515,8 +506,8 @@ class TestRaceAPI:
     @pytest.mark.asyncio
     async def test_delete_locked_race_api(self, db_session: AsyncSession):
         """DELETE locked race → 204."""
-        from app.services.race_service import create_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -524,7 +515,7 @@ class TestRaceAPI:
         created = await create_race(db_session, RaceCreate(
             name="LockedDelete", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
         created.status = RaceStatus.LOCKED
         await db_session.flush()
 
@@ -544,8 +535,8 @@ class TestRaceAPI:
     @pytest.mark.asyncio
     async def test_unauthenticated_delete_race_api(self, db_session: AsyncSession):
         """DELETE without admin auth → 401."""
-        from app.services.race_service import create_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -553,7 +544,7 @@ class TestRaceAPI:
         created = await create_race(db_session, RaceCreate(
             name="NoAuthDelete", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
 
         app.dependency_overrides[get_db] = lambda: db_session
         transport = ASGITransport(app=app)
@@ -561,11 +552,6 @@ class TestRaceAPI:
             resp = await client.delete(f"/api/v1/races/{created.id}")
             assert resp.status_code == 401
 
-        app.dependency_overrides.clear()
-        app.dependency_overrides[get_db] = lambda: db_session
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post("/api/v1/races", json=_make_race_json(
                 "NoAuth", "2026-06-15",
                 horse_ids=[1, 2],
@@ -596,10 +582,18 @@ class TestRaceAPI:
                 "sex_restriction": "无",
                 "race_grade": "INVALID",
                 "country": "日本",
-                "distance": "1200m",
+                "distance": 1200,
+                "surface": "草地",
                 "horse_ids": [1, 2],
             })
             assert resp.status_code == 422
+
+            # Invalid distance (<= 0 or non-integer string with suffix)
+            for bad_dist in (0, -100, "1200m", True):
+                bad_resp = await client.post("/api/v1/races", json=_make_race_json(
+                    "Test", "2026-06-15", distance=bad_dist, horse_ids=[1, 2]
+                ))
+                assert bad_resp.status_code == 422
 
             # Single horse (and dropped race_grade values G3 / JPN2)
             for dropped_grade in ("G3", "JPN2"):
@@ -619,11 +613,12 @@ class TestRaceSettledResults:
     @pytest.mark.asyncio
     async def test_settled_race_horse_votes_grouped(self, db_session: AsyncSession):
         """Settled race — horses sorted by position, votes grouped correctly."""
-        from app.services.race_service import create_race
-        from app.schemas.race import RaceCreate
-        from app.models.race import RaceHorse, RaceStatus
-        from app.models.vote import Vote
+        from app.models.race import RaceStatus
         from app.models.user import User
+        from app.models.vote import Vote
+        from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
+        from app.services.vote_service import get_race_results_grouped_by_horse
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -631,12 +626,10 @@ class TestRaceSettledResults:
         race = await create_race(db_session, RaceCreate(
             name="SettledTest", date=date(2026, 6, 15), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
         race_id = race.id
 
-        race_horses = race.race_horses
-        rh1 = race_horses[0]
-        rh2 = race_horses[1]
+        rh1, rh2 = race.race_horses[0], race.race_horses[1]
         rh1.position = 1
         rh2.position = 2
         race.status = RaceStatus.SETTLED
@@ -652,7 +645,6 @@ class TestRaceSettledResults:
         db_session.add_all([vote1, vote2])
         await db_session.flush()
 
-        from app.services.vote_service import get_race_results_grouped_by_horse
         result = await get_race_results_grouped_by_horse(db_session, race_id)
 
         assert len(result) == 2
@@ -670,11 +662,12 @@ class TestRaceSettledResults:
     @pytest.mark.asyncio
     async def test_settled_race_dnf_horse_last(self, db_session: AsyncSession):
         """Settled race — DNF horse listed last with 0-point votes."""
-        from app.services.race_service import create_race
-        from app.schemas.race import RaceCreate
-        from app.models.race import RaceHorse, RaceStatus
-        from app.models.vote import Vote
+        from app.models.race import RaceStatus
         from app.models.user import User
+        from app.models.vote import Vote
+        from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
+        from app.services.vote_service import get_race_results_grouped_by_horse
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -682,12 +675,10 @@ class TestRaceSettledResults:
         race = await create_race(db_session, RaceCreate(
             name="DNFTest", date=date(2026, 6, 20), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
         race_id = race.id
 
-        race_horses = race.race_horses
-        rh1 = race_horses[0]
-        rh2 = race_horses[1]
+        rh1, rh2 = race.race_horses[0], race.race_horses[1]
         rh1.position = 1
         rh2.position = 0  # DNF
         race.status = RaceStatus.SETTLED
@@ -701,7 +692,6 @@ class TestRaceSettledResults:
         db_session.add(vote)
         await db_session.flush()
 
-        from app.services.vote_service import get_race_results_grouped_by_horse
         result = await get_race_results_grouped_by_horse(db_session, race_id)
 
         assert len(result) == 2
@@ -714,9 +704,10 @@ class TestRaceSettledResults:
     @pytest.mark.asyncio
     async def test_settled_race_horse_with_no_votes(self, db_session: AsyncSession):
         """Settled race — horse with zero votes shows empty votes list."""
-        from app.services.race_service import create_race
+        from app.models.race import RaceStatus
         from app.schemas.race import RaceCreate
-        from app.models.race import RaceHorse, RaceStatus
+        from app.services.race_service import create_race
+        from app.services.vote_service import get_race_results_grouped_by_horse
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -724,18 +715,14 @@ class TestRaceSettledResults:
         race = await create_race(db_session, RaceCreate(
             name="NoVotesHorse", date=date(2026, 6, 25), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
         race_id = race.id
 
-        race_horses = race.race_horses
-        rh1 = race_horses[0]
-        rh2 = race_horses[1]
-        rh1.position = 1
-        rh2.position = 2
+        race.race_horses[0].position = 1
+        race.race_horses[1].position = 2
         race.status = RaceStatus.SETTLED
         await db_session.flush()
 
-        from app.services.vote_service import get_race_results_grouped_by_horse
         result = await get_race_results_grouped_by_horse(db_session, race_id)
 
         assert len(result) == 2
@@ -747,11 +734,12 @@ class TestRaceSettledResults:
     @pytest.mark.asyncio
     async def test_settled_race_multiple_users_same_horse(self, db_session: AsyncSession):
         """Multiple users voted for same horse — all listed."""
-        from app.services.race_service import create_race
-        from app.schemas.race import RaceCreate
-        from app.models.race import RaceHorse, RaceStatus
-        from app.models.vote import Vote
+        from app.models.race import RaceStatus
         from app.models.user import User
+        from app.models.vote import Vote
+        from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
+        from app.services.vote_service import get_race_results_grouped_by_horse
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -759,12 +747,10 @@ class TestRaceSettledResults:
         race = await create_race(db_session, RaceCreate(
             name="MultiVote", date=date(2026, 7, 1), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id],
-        ), creator_id=1)
+        ))
         race_id = race.id
 
-        race_horses = race.race_horses
-        rh1 = race_horses[0]
-        rh2 = race_horses[1]
+        rh1, rh2 = race.race_horses[0], race.race_horses[1]
         rh1.position = 1
         rh2.position = 2
         race.status = RaceStatus.SETTLED
@@ -782,7 +768,6 @@ class TestRaceSettledResults:
             db_session.add(v)
         await db_session.flush()
 
-        from app.services.vote_service import get_race_results_grouped_by_horse
         result = await get_race_results_grouped_by_horse(db_session, race_id)
 
         assert len(result[0]["votes"]) == 3
@@ -797,11 +782,11 @@ class TestRaceSettledResults:
     @pytest.mark.asyncio
     async def test_settled_race_api_horse_votes_field(self, db_session: AsyncSession):
         """API — settled race detail includes horse_votes field."""
-        from app.services.race_service import create_race
-        from app.schemas.race import RaceCreate
         from app.models.race import RaceStatus
-        from app.models.vote import Vote
         from app.models.user import User
+        from app.models.vote import Vote
+        from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -809,7 +794,7 @@ class TestRaceSettledResults:
         race = await create_race(db_session, RaceCreate(
             name="APISettled", date=date(2026, 7, 5), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id], is_hidden=False,
-        ), creator_id=1)
+        ))
         race_id = race.id
 
         race.race_horses[0].position = 1
@@ -844,8 +829,8 @@ class TestRaceSettledResults:
     @pytest.mark.asyncio
     async def test_voting_race_api_no_horse_votes(self, db_session: AsyncSession):
         """Voting race — horse_votes is null (not populated)."""
-        from app.services.race_service import create_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -853,7 +838,7 @@ class TestRaceSettledResults:
         race = await create_race(db_session, RaceCreate(
             name="VotingNoVotes", date=date(2026, 7, 10), **_make_race_kwargs(),
             horse_ids=[h1.id, h2.id], is_hidden=False,
-        ), creator_id=1)
+        ))
         race_id = race.id
 
         app.dependency_overrides[get_db] = lambda: db_session
@@ -868,20 +853,18 @@ class TestRaceSettledResults:
         app.dependency_overrides.clear()
 
 
-
 class TestRaceHorseManagement:
     """Tests for incremental horse management and gate ordering."""
 
     @pytest.mark.asyncio
     async def test_create_race_with_no_horses(self, db_session: AsyncSession):
         """Admin can create a race with zero horses."""
-        from app.services.race_service import create_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         race = await create_race(
             db_session,
             RaceCreate(name="EmptyRace", date=date(2026, 8, 1), **_make_race_kwargs()),
-            creator_id=1,
         )
 
         assert race.id is not None
@@ -893,8 +876,8 @@ class TestRaceHorseManagement:
     @pytest.mark.asyncio
     async def test_add_horse_to_race(self, db_session: AsyncSession):
         """Add a single horse to a voting race via service."""
-        from app.services.race_service import create_race, add_horse_to_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import add_horse_to_race, create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -903,13 +886,11 @@ class TestRaceHorseManagement:
         race = await create_race(
             db_session,
             RaceCreate(name="AddHorse", date=date(2026, 8, 1), **_make_race_kwargs(), horse_ids=[h1.id, h2.id]),
-            creator_id=1,
         )
         race_id = race.id
 
-        rh = await add_horse_to_race(db_session, race_id, h3.id, weight="500kg", jockey="J. Moreira")
+        rh = await add_horse_to_race(db_session, race_id, h3.id, jockey="J. Moreira")
         assert rh.horse_id == h3.id
-        assert rh.weight == "500kg"
         assert rh.jockey == "J. Moreira"
         assert rh.gate == 3
 
@@ -918,9 +899,8 @@ class TestRaceHorseManagement:
     @pytest.mark.asyncio
     async def test_add_duplicate_horse_to_race(self, db_session: AsyncSession):
         """Adding a horse already in the race returns 400."""
-        from app.services.race_service import create_race, add_horse_to_race
         from app.schemas.race import RaceCreate
-        from fastapi import HTTPException
+        from app.services.race_service import add_horse_to_race, create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -928,7 +908,6 @@ class TestRaceHorseManagement:
         race = await create_race(
             db_session,
             RaceCreate(name="DupHorse", date=date(2026, 8, 1), **_make_race_kwargs(), horse_ids=[h1.id, h2.id]),
-            creator_id=1,
         )
 
         with pytest.raises(HTTPException) as exc_info:
@@ -941,10 +920,9 @@ class TestRaceHorseManagement:
     @pytest.mark.asyncio
     async def test_add_horse_to_locked_race(self, db_session: AsyncSession):
         """Adding a horse to a locked race returns 400."""
-        from app.services.race_service import create_race, add_horse_to_race
-        from app.schemas.race import RaceCreate
         from app.models.race import RaceStatus
-        from fastapi import HTTPException
+        from app.schemas.race import RaceCreate
+        from app.services.race_service import add_horse_to_race, create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -953,7 +931,6 @@ class TestRaceHorseManagement:
         race = await create_race(
             db_session,
             RaceCreate(name="LockedRace", date=date(2026, 8, 1), **_make_race_kwargs(), horse_ids=[h1.id, h2.id]),
-            creator_id=1,
         )
         race.status = RaceStatus.LOCKED
         await db_session.flush()
@@ -966,10 +943,10 @@ class TestRaceHorseManagement:
         await db_session.rollback()
 
     @pytest.mark.asyncio
-    async def test_update_race_horse(self, db_session: AsyncSession):
-        """Update per-race weight/jockey for a race horse."""
-        from app.services.race_service import create_race, update_race_horse
+    async def test_update_race_horse(self, db_session: AsyncSession, async_client: AsyncClient):
+        """PATCH only changes the jockey when the field is present."""
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -977,23 +954,26 @@ class TestRaceHorseManagement:
         race = await create_race(
             db_session,
             RaceCreate(name="UpdateHorse", date=date(2026, 8, 1), **_make_race_kwargs(), horse_ids=[h1.id, h2.id]),
-            creator_id=1,
         )
         rh = race.race_horses[0]
+        url = f"/api/v1/races/{race.id}/horses/{rh.id}"
+        app.dependency_overrides[get_current_admin] = override_get_admin
 
-        updated = await update_race_horse(db_session, race.id, rh.id, weight="510kg", jockey="Y. Kawada")
-        assert updated.weight == "510kg"
-        assert updated.jockey == "Y. Kawada"
-        assert updated.snapshot_data["weight"] == "510kg"
-        assert updated.snapshot_data["jockey"] == "Y. Kawada"
-
-        await db_session.rollback()
+        for payload, expected in (
+            ({"jockey": "Y. Kawada"}, "Y. Kawada"),
+            ({}, "Y. Kawada"),
+            ({"weight": 480}, "Y. Kawada"),
+            ({"jockey": None}, None),
+        ):
+            response = await async_client.patch(url, json=payload)
+            assert response.status_code == 200
+            assert response.json()["data"]["jockey"] == expected
 
     @pytest.mark.asyncio
     async def test_update_gate_order(self, db_session: AsyncSession):
         """Update gate order for all horses in a race."""
-        from app.services.race_service import create_race, update_gate_order
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race, update_gate_order
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -1002,7 +982,6 @@ class TestRaceHorseManagement:
         race = await create_race(
             db_session,
             RaceCreate(name="GateOrder", date=date(2026, 8, 1), **_make_race_kwargs(), horse_ids=[h1.id, h2.id, h3.id]),
-            creator_id=1,
         )
         rh_ids = [rh.id for rh in race.race_horses]
 
@@ -1019,9 +998,8 @@ class TestRaceHorseManagement:
     @pytest.mark.asyncio
     async def test_update_gate_order_incomplete(self, db_session: AsyncSession):
         """Gate order missing a horse returns 400."""
-        from app.services.race_service import create_race, update_gate_order
         from app.schemas.race import RaceCreate
-        from fastapi import HTTPException
+        from app.services.race_service import create_race, update_gate_order
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -1029,7 +1007,6 @@ class TestRaceHorseManagement:
         race = await create_race(
             db_session,
             RaceCreate(name="GateOrderBad", date=date(2026, 8, 1), **_make_race_kwargs(), horse_ids=[h1.id, h2.id]),
-            creator_id=1,
         )
         rh_ids = [rh.id for rh in race.race_horses]
 
@@ -1043,8 +1020,8 @@ class TestRaceHorseManagement:
     @pytest.mark.asyncio
     async def test_add_race_horse_api(self, db_session: AsyncSession):
         """POST /api/v1/races/{id}/horses adds a horse."""
-        from app.services.race_service import create_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -1053,7 +1030,6 @@ class TestRaceHorseManagement:
         race = await create_race(
             db_session,
             RaceCreate(name="APIAddHorse", date=date(2026, 8, 1), **_make_race_kwargs(), horse_ids=[h1.id, h2.id]),
-            creator_id=1,
         )
 
         app.dependency_overrides[get_db] = lambda: db_session
@@ -1063,13 +1039,12 @@ class TestRaceHorseManagement:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(f"/api/v1/races/{race.id}/horses", json={
                 "horse_id": h3.id,
-                "weight": "505kg",
                 "jockey": "K. Fujioka",
             })
             assert resp.status_code == 201
             data = resp.json()["data"]
             assert data["horse_id"] == h3.id
-            assert data["weight"] == "505kg"
+            assert "weight" not in data
             assert data["jockey"] == "K. Fujioka"
             assert data["gate"] == 3
 
@@ -1079,8 +1054,8 @@ class TestRaceHorseManagement:
     @pytest.mark.asyncio
     async def test_update_gate_order_api(self, db_session: AsyncSession):
         """PATCH /api/v1/races/{id}/horses/gate updates gate order."""
-        from app.services.race_service import create_race
         from app.schemas.race import RaceCreate
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -1088,7 +1063,6 @@ class TestRaceHorseManagement:
         race = await create_race(
             db_session,
             RaceCreate(name="APIGate", date=date(2026, 8, 1), **_make_race_kwargs(), horse_ids=[h1.id, h2.id]),
-            creator_id=1,
         )
         rh_ids = [rh.id for rh in race.race_horses]
 

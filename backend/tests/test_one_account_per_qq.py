@@ -7,7 +7,6 @@ from sqlalchemy import select
 from app.api.deps import get_current_admin
 from app.main import app
 from app.models.historical_score import HistoricalRace, HistoricalScore
-from app.models.invite_code import InviteCode
 from app.models.race import Race, RaceHorse, RaceStatus
 from app.models.user import User
 from app.models.vote import Vote
@@ -74,9 +73,8 @@ async def test_placeholder_qq_reuses_pending_code_and_new_code_attaches_to_place
     with pytest.raises(HTTPException) as error:
         await create_invite_code(db_session, '12345')
     assert error.value.detail['code'] == 'QQ_HAS_UNUSED_CODE'
-    # Even if the placeholder's code went missing, a new code is attached to the same placeholder.
-    old = (await db_session.execute(select(InviteCode).where(InviteCode.code == placeholder.invite_code))).scalar_one()
-    await db_session.delete(old)
+    # Even if a placeholder row lost its invite_code, generating a new code attaches to the same row.
+    placeholder.invite_code = None
     await db_session.flush()
     created = await create_invite_code(db_session, '12345')
     assert created.placeholder_username == placeholder.username
@@ -86,28 +84,28 @@ async def test_placeholder_qq_reuses_pending_code_and_new_code_attaches_to_place
 @pytest.mark.asyncio
 async def test_register_refuses_second_account_for_same_qq(async_client, db_session):
     db_session.add(User(username='已注册', qq='11111', password_hash='x', invite_code='REG00001'))
-    db_session.add(InviteCode(code='LEGACY01', status='unused', bound_qq=None))
+    db_session.add(User(username=None, password_hash=None, qq='22222', invite_code='OTHER001'))
     await db_session.flush()
     response = await async_client.post('/api/v1/auth/register', json={
-        'username': '第二个号', 'password': 'secret123', 'qq': '11111', 'invite_code': 'LEGACY01'})
+        'username': '第二个号', 'password': 'secret123', 'qq': '11111', 'invite_code': 'OTHER001'})
     assert response.status_code == 400
     assert response.json()['detail']['code'] == 'QQ_ALREADY_REGISTERED'
     assert len((await db_session.execute(select(User).where(User.qq == '11111'))).scalars().all()) == 1
 
 
 @pytest.mark.asyncio
-async def test_legacy_unbound_code_cannot_activate_placeholder(async_client, db_session):
+async def test_other_qq_code_cannot_activate_placeholder(async_client, db_session):
     await import_workbook(db_session, workbook())
     placeholder = await placeholder_for(db_session)
-    legacy = InviteCode(code='LEGACY01', status='unused')
-    db_session.add(legacy)
+    other = User(username=None, password_hash=None, qq='99999', invite_code='OTHER001')
+    db_session.add(other)
     await db_session.flush()
 
     registration = {'username': '新名字', 'password': 'secret123', 'qq': '12345'}
-    denied = await async_client.post('/api/v1/auth/register', json={**registration, 'invite_code': legacy.code})
+    denied = await async_client.post('/api/v1/auth/register', json={**registration, 'invite_code': other.invite_code})
     assert denied.status_code == 400
-    assert denied.json()['detail']['code'] == 'INVITE_CODE_INVALID'
-    assert legacy.status == 'unused'
+    assert denied.json()['detail']['code'] == 'QQ_MISMATCH'
+    assert other.password_hash is None
 
     accepted = await async_client.post('/api/v1/auth/register', json={**registration, 'invite_code': placeholder.invite_code})
     assert accepted.status_code == 201
@@ -140,11 +138,13 @@ async def test_deleting_used_code_removes_user_votes_and_historical_scores(admin
     await admin_client.post('/api/v1/auth/register', json={
         'username': '新名字', 'password': 'secret123', 'qq': '12345', 'invite_code': placeholder.invite_code})
     user = await placeholder_for(db_session)
-    admin = User(username='admin', qq='10001', password_hash='x', invite_code='ADMIN001', is_admin=True)
-    db_session.add(admin)
+    admin = User(username='admin', qq='10001', password_hash='x', invite_code=None, is_admin=True)
+    other_user = User(username='别人', qq='99999', password_hash=None, invite_code='OTH00001')
+    db_session.add_all([admin, other_user])
     await db_session.flush()
+    other_user_id = other_user.id
     race = Race(name='live', date=date(2026, 2, 1), age_range='其他', sex_restriction='无', race_grade='G1',
-        country='日本', distance='1200m', surface='草地', status=RaceStatus.SETTLED, creator_id=admin.id)
+        country='日本', distance=1200, surface='草地', status=RaceStatus.SETTLED)
     db_session.add(race)
     await db_session.flush()
     horse = RaceHorse(race_id=race.id, horse_id=1, snapshot_data={'name': 'h'}, position=1)
@@ -152,7 +152,7 @@ async def test_deleting_used_code_removes_user_votes_and_historical_scores(admin
     await db_session.flush()
     db_session.add(Vote(user_id=user.id, race_id=race.id, race_horse_id=horse.id, points=10))
     other_race = (await db_session.execute(select(HistoricalRace))).scalars().first()
-    db_session.add(HistoricalScore(race_id=other_race.id, qq='99999', display_name='别人', points=7))
+    db_session.add(HistoricalScore(race_id=other_race.id, user_id=other_user.id, points=7))
     await db_session.flush()
 
     response = await admin_client.delete(f'/api/v1/admin/invite-codes/{user.invite_code}')
@@ -160,5 +160,5 @@ async def test_deleting_used_code_removes_user_votes_and_historical_scores(admin
     db_session.expire_all()
     assert (await db_session.execute(select(User).where(User.qq == '12345'))).scalar_one_or_none() is None
     assert (await db_session.execute(select(Vote))).scalars().all() == []
-    assert [s.qq for s in (await db_session.execute(select(HistoricalScore))).scalars()] == ['99999']
-    assert (await db_session.execute(select(InviteCode))).scalars().all() == []
+    assert [s.user_id for s in (await db_session.execute(select(HistoricalScore))).scalars()] == [other_user_id]
+    assert [c.code for c in await get_invite_codes(db_session)] == ['OTH00001']

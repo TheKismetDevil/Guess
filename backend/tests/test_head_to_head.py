@@ -1,6 +1,5 @@
 from datetime import date
 
-import pytest
 from sqlalchemy import select
 
 from app.api.deps import get_optional_user
@@ -10,6 +9,7 @@ from app.models.race import RaceHorse, RaceStatus
 from app.models.user import User
 from app.models.vote import Vote
 from app.services.head_to_head_service import compare, get_participants
+from app.services.placeholder_user_service import ensure_placeholders
 from tests.test_leaderboard import leaderboard_data  # Shared settled-race fixture.
 
 
@@ -22,8 +22,15 @@ async def historical_race(db, name, when, scores, **metadata):
         race_grade='G1', country='日本', surface='草地', distance=1600, horse_count=12, **metadata)
     db.add(race)
     await db.flush()
-    for qq, display_name, points in scores:
-        db.add(HistoricalScore(race_id=race.id, qq=qq, display_name=display_name, points=points))
+    await ensure_placeholders(db, {qq: display_name for qq, display_name, _ in scores})
+    users_by_qq = {
+        u.qq: u.id
+        for u in (
+            await db.execute(select(User).where(User.qq.in_([qq for qq, _, _ in scores])))
+        ).scalars()
+    }
+    for qq, _, points in scores:
+        db.add(HistoricalScore(race_id=race.id, user_id=users_by_qq[qq], points=points))
     await db.flush()
     return race
 
@@ -64,8 +71,8 @@ async def test_historical_only_users_and_all_race_filters(db_session, leaderboar
     await historical_race(db_session, '共同赛', date(2026, 7, 1), [('10002', '旧昵称', 2), ('99999', 'user1', 7)])
     await historical_race(db_session, '较晚的比赛', date(2026, 7, 2), [('10002', '旧昵称', 10), ('99999', 'user1', 0)])
     people = await get_participants(db_session)
-    historic = next(p for p in people if p['kind'] == 'historical')
-    assert historic['username'] == 'user1'  # A matching nickname must not merge identities.
+    historic = next(p for p in people if p['username'] == 'user1#2')
+    assert historic['kind'] == 'user'  # Separate placeholder User identity, never merged by nickname.
     assert '99999' not in historic['id']
     ids = [historic['id'], user_key(leaderboard_data['user1'])]
     filters = dict(age_range=['3岁'], sex_restriction=['无'], race_grade=['G1'], country=['日本'], surface=['草地'],
@@ -91,8 +98,8 @@ async def test_admin_qq_is_not_merged_and_unregistered_history_stays_separate(db
     people = await get_participants(db_session)
     assert '管理员旧名' not in [p['username'] for p in people]
     assert user_key(leaderboard_data['admin']) not in [p['id'] for p in people]
-    historic = next(p for p in people if p['kind'] == 'historical')
-    assert historic['username'] == '历史独立身份'
+    historic = next(p for p in people if p['username'] == '历史独立身份')
+    assert historic['kind'] == 'user'
     assert (await compare(db_session, [user_key(leaderboard_data['user1']), historic['id']]))['races'] == []
 
 

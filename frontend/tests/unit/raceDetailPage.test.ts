@@ -48,21 +48,19 @@ function makeRace(status: RaceStatus): RaceDetail {
     sex_restriction: '无限制',
     race_grade: 'G1',
     country: '澳大利亚',
-    distance: '1200m',
+    distance: 1200,
     surface: '草地',
     status,
     is_hidden: false,
     custom_scoring: null,
     vote_count: 0,
     created_at: '2026-10-01T00:00:00Z',
-    updated_at: '2026-10-01T00:00:00Z',
     horses: [
       {
         horse_id: 101,
         race_horse_id: 201,
         gate: 1,
         position: status === 'settled' ? 1 : null,
-        weight: null,
         jockey: null,
         snapshot_data: {
           name: '海都之星',
@@ -85,7 +83,6 @@ function makeRace(status: RaceStatus): RaceDetail {
         race_horse_id: 202,
         gate: 2,
         position: status === 'settled' ? 2 : null,
-        weight: null,
         jockey: null,
         snapshot_data: {
           name: '嘉应高升',
@@ -108,7 +105,6 @@ function makeRace(status: RaceStatus): RaceDetail {
         race_horse_id: 203,
         gate: 3,
         position: status === 'settled' ? null : null,
-        weight: null,
         jockey: null,
         snapshot_data: {
           name: '浪漫勇士',

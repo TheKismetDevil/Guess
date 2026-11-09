@@ -13,10 +13,7 @@ from app.core.security import (
     get_password_hash,
     verify_password,
 )
-from app.models.invite_code import InviteCode
 from app.models.user import User
-from app.services.avatar_service import avatar_key
-from app.services.placeholder_user_service import is_placeholder
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -28,6 +25,7 @@ from app.schemas.auth import (
     TokenRefreshResponse,
     UserInfo,
 )
+from app.services.avatar_service import avatar_key
 
 
 async def login(db: AsyncSession, request: LoginRequest) -> LoginResponse:
@@ -40,15 +38,18 @@ async def login(db: AsyncSession, request: LoginRequest) -> LoginResponse:
 
     Returns 401 for invalid credentials (no field-specific leak).
     """
-    user = None
+    user: User | None = None
 
     # Mode 3: Invite code login (passwordless)
     if request.invite_code:
         result = await db.execute(
-            select(InviteCode).where(InviteCode.code == request.invite_code)
+            select(User).where(
+                User.invite_code == request.invite_code,
+                User.is_admin == False,
+            )
         )
-        invite_code = result.scalar_one_or_none()
-        if invite_code is None:
+        code_user = result.scalar_one_or_none()
+        if code_user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -56,7 +57,7 @@ async def login(db: AsyncSession, request: LoginRequest) -> LoginResponse:
                     "message": "用户名或密码错误",
                 },
             )
-        if invite_code.status == "unused":
+        if code_user.password_hash is None or code_user.username is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -64,19 +65,7 @@ async def login(db: AsyncSession, request: LoginRequest) -> LoginResponse:
                     "message": "该邀请码尚未绑定用户",
                 },
             )
-        if invite_code.status == "disabled":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "code": "INVALID_CREDENTIALS",
-                    "message": "用户名或密码错误",
-                },
-            )
-        if invite_code.status == "used" and invite_code.bound_username:
-            user_result = await db.execute(
-                select(User).where(User.username == invite_code.bound_username)
-            )
-            user = user_result.scalar_one_or_none()
+        user = code_user
 
     # Mode 2: QQ + password
     elif request.qq:
@@ -88,13 +77,14 @@ async def login(db: AsyncSession, request: LoginRequest) -> LoginResponse:
                     "message": "用户名或密码错误",
                 },
             )
-        result = await db.execute(
-            select(User).where(User.qq == request.qq).limit(2)
-        )
-        matches = result.scalars().all()
-        user = matches[0] if len(matches) == 1 else None
-        if user and not verify_password(request.password, user.password_hash):
-            user = None
+        result = await db.execute(select(User).where(User.qq == request.qq))
+        candidate = result.scalar_one_or_none()
+        if (
+            candidate
+            and candidate.username is not None
+            and verify_password(request.password, candidate.password_hash)
+        ):
+            user = candidate
 
     # Mode 1: Username + password
     else:
@@ -109,11 +99,11 @@ async def login(db: AsyncSession, request: LoginRequest) -> LoginResponse:
         result = await db.execute(
             select(User).where(User.username == request.username)
         )
-        user = result.scalar_one_or_none()
-        if user and not verify_password(request.password, user.password_hash):
-            user = None
+        candidate = result.scalar_one_or_none()
+        if candidate and verify_password(request.password, candidate.password_hash):
+            user = candidate
 
-    if user is None:
+    if user is None or user.username is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -141,23 +131,14 @@ async def login(db: AsyncSession, request: LoginRequest) -> LoginResponse:
 async def refresh_token(
     db: AsyncSession, request: TokenRefreshRequest
 ) -> TokenRefreshResponse:
-    """Validate refresh token and issue a new access token.
-
-    Flow:
-    1. Decode refresh_token and extract username (sub claim)
-    2. Verify the user still exists in DB
-    3. Generate a new access_token
-    4. Return the new token
-
-    Handles expired and invalid refresh tokens separately.
-    """
+    """Validate refresh token and issue a new access token."""
     try:
         payload = jwt.decode(
             request.refresh_token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
-        username: str = payload.get("sub")
+        username: str | None = payload.get("sub")
         if username is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -183,10 +164,9 @@ async def refresh_token(
             },
         )
 
-    # Verify user still exists
     result = await db.execute(select(User).where(User.username == username))
     user = result.scalar_one_or_none()
-    if user is None:
+    if user is None or user.password_hash is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -195,32 +175,22 @@ async def refresh_token(
             },
         )
 
-    # Generate new access_token
     access_token = create_access_token(data={"sub": username})
-
     return TokenRefreshResponse(access_token=access_token)
 
 
 async def register(
     db: AsyncSession, request: RegisterRequest
 ) -> RegisterResponse:
-    """Handle user registration with invite code validation.
-
-    Flow:
-    1. Look up invite code by code string
-    2. Validate invite code status is "unused"
-    3. Check username uniqueness
-    4. Hash password, create User (or activate the QQ's placeholder user
-       created by historical import), bind invite code
-    5. Generate JWT tokens, return response
-    """
-    # Step 1: Look up invite code
+    """Activate an unused invite / placeholder ``User`` row in place."""
     result = await db.execute(
-        select(InviteCode).where(InviteCode.code == request.invite_code).with_for_update()
+        select(User)
+        .where(User.invite_code == request.invite_code, User.is_admin == False)
+        .with_for_update()
     )
-    invite_code = result.scalar_one_or_none()
+    user = result.scalar_one_or_none()
 
-    if invite_code is None:
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -229,8 +199,7 @@ async def register(
             },
         )
 
-    # Step 2: Validate invite code status
-    if invite_code.status == "used":
+    if user.password_hash is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -239,17 +208,16 @@ async def register(
             },
         )
 
-    if invite_code.status != "unused":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "INVITE_CODE_INVALID",
-                "message": "邀请码无效或已被使用",
-            },
-        )
-
-    # Step 2.5: Validate QQ matches the bound QQ on the invite code
-    if invite_code.bound_qq and invite_code.bound_qq != request.qq:
+    if user.qq != request.qq:
+        # Check whether the requested QQ already belongs to a registered user or placeholder
+        qq_owner = (
+            await db.execute(select(User).where(User.qq == request.qq))
+        ).scalar_one_or_none()
+        if qq_owner is not None and (qq_owner.is_admin or qq_owner.password_hash is not None):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "QQ_ALREADY_REGISTERED", "message": "该 QQ 已注册账户"},
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -258,30 +226,16 @@ async def register(
             },
         )
 
-    # Lock the row before deciding whether to activate it so orphan cleanup
-    # either finishes first or rechecks the password after activation commits.
-    matches = (await db.scalars(
-        select(User).where(User.qq == request.qq).limit(2).with_for_update()
-    )).all()
-    placeholder = matches[0] if len(matches) == 1 and is_placeholder(matches[0]) else None
-    if matches and placeholder is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "QQ_ALREADY_REGISTERED", "message": "该 QQ 已注册账户"},
+    # Check username uniqueness (a placeholder being activated may keep its own name)
+    existing_user = (
+        await db.execute(
+            select(User).where(
+                User.username == request.username,
+                User.id != user.id,
+            )
         )
-    if placeholder is not None and (
-        invite_code.bound_qq != request.qq or invite_code.code != placeholder.invite_code
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INVITE_CODE_INVALID", "message": "请使用该 QQ 对应的专用邀请码"},
-        )
-
-    # Step 3.5: Check username uniqueness (a placeholder being activated may keep its own name)
-    existing_user = (await db.execute(
-        select(User).where(User.username == request.username)
-    )).scalar_one_or_none()
-    if existing_user is not None and existing_user is not placeholder:
+    ).scalar_one_or_none()
+    if existing_user is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -290,35 +244,12 @@ async def register(
             },
         )
 
-    # Step 4: Hash password
-    password_hash = get_password_hash(request.password)
+    user.username = request.username
+    user.password_hash = get_password_hash(request.password)
 
-    # Step 5: Activate the placeholder created by historical import, or create a new User
-    if placeholder is not None:
-        user = placeholder
-        user.username = request.username
-        user.password_hash = password_hash
-    else:
-        user = User(
-            username=request.username,
-            password_hash=password_hash,
-            qq=request.qq,
-            invite_code=request.invite_code,
-            is_admin=False,
-        )
-        db.add(user)
-
-    # Step 6: Bind invite code
-    invite_code.status = "used"
-    invite_code.bound_username = request.username
-    invite_code.bound_qq = request.qq
-
-    # Flush to get user.id before generating JWT
-    # Catch IntegrityError for concurrent username duplicate registration
     try:
         await db.flush()
     except IntegrityError:
-        # Rollback to allow re-use of the session
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -328,13 +259,12 @@ async def register(
             },
         )
 
-    # Step 7: Generate JWT tokens
     access_token = create_access_token(data={"sub": user.username})
-    refresh_token = create_refresh_token(data={"sub": user.username})
+    refresh_token_val = create_refresh_token(data={"sub": user.username})
 
     return RegisterResponse(
         access_token=access_token,
-        refresh_token=refresh_token,
+        refresh_token=refresh_token_val,
         user=UserInfo(
             id=user.id,
             username=user.username,
@@ -348,39 +278,16 @@ async def register(
 async def reset_password(
     db: AsyncSession, request: ResetPasswordRequest
 ) -> ResetPasswordResponse:
-    """Reset password using bound invite code verification.
-
-    Flow:
-    1. Look up invite_code by code string
-    2. Verify invite_code is bound to a user (status == "used")
-    3. Hash new password
-    4. Update user's password_hash
-    5. Return response with user info
-
-    Returns 400 for all mismatch cases (no field-specific leak).
-    """
-    # Step 1: Look up invite code
-    invite_result = await db.execute(
-        select(InviteCode).where(InviteCode.code == request.invite_code)
-    )
-    invite_code = invite_result.scalar_one_or_none()
-
-    if invite_code is None or invite_code.status != "used" or not invite_code.bound_username:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "INVITE_CODE_MISMATCH",
-                "message": "邀请码无效",
-            },
-        )
-
-    # Step 2: Look up user by bound username
+    """Reset password using bound invite code verification."""
     result = await db.execute(
-        select(User).where(User.username == invite_code.bound_username)
+        select(User).where(
+            User.invite_code == request.invite_code,
+            User.is_admin == False,
+        )
     )
     user = result.scalar_one_or_none()
 
-    if user is None:
+    if user is None or user.password_hash is None or user.username is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -389,11 +296,7 @@ async def reset_password(
             },
         )
 
-    # Step 3: Hash new password
-    new_password_hash = get_password_hash(request.new_password)
-
-    # Step 4: Update user's password_hash
-    user.password_hash = new_password_hash
+    user.password_hash = get_password_hash(request.new_password)
     await db.flush()
 
     return ResetPasswordResponse(

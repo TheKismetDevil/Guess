@@ -1,16 +1,16 @@
 """Tests for invite code utilities, service, and API endpoints."""
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.api.deps import get_current_admin
 from app.core.database import Base, get_db
 from app.main import app
+from app.models.user import User
 from app.utils.invite_code import generate_invite_code
-from app.models.invite_code import InviteCode
-from app.api.deps import get_current_admin
 
 
 # --- In-memory SQLite test database ---
@@ -78,9 +78,12 @@ class TestInviteCodeService:
         from app.services.invite_code_service import create_invite_code, get_invite_codes
 
         c1 = await create_invite_code(db_session, qq="12345")
-        # Manually set bound fields for search testing
-        row = (await db_session.execute(select(InviteCode).where(InviteCode.code == c1.code))).scalar_one()
-        row.bound_username = "testuser"
+        # Activate user row for search testing
+        row = (
+            await db_session.execute(select(User).where(User.invite_code == c1.code))
+        ).scalar_one()
+        row.username = "testuser"
+        row.password_hash = "x"
         await db_session.flush()
 
         # Search by code
@@ -174,11 +177,14 @@ class TestInviteCodeAPI:
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # Create a code and set bound fields
             from app.services.invite_code_service import create_invite_code
+
             c = await create_invite_code(db_session, qq="99999")
-            row = (await db_session.execute(select(InviteCode).where(InviteCode.code == c.code))).scalar_one()
-            row.bound_username = "founduser"
+            row = (
+                await db_session.execute(select(User).where(User.invite_code == c.code))
+            ).scalar_one()
+            row.username = "founduser"
+            row.password_hash = "x"
             await db_session.flush()
 
             # Search by username

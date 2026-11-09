@@ -14,21 +14,16 @@ async def seed_admin(db: AsyncSession) -> None:
     This function is idempotent — if the admin user already exists,
     it does nothing. The default password is "admin123" and should
     be changed after first login.
-
-    Protected against concurrent IntegrityError if multiple workers
-    attempt to seed simultaneously.
     """
-    result = await db.execute(
-        select(User).where(User.username == "admin")
-    )
+    result = await db.execute(select(User).where(User.username == "admin"))
     if result.scalar_one_or_none() is not None:
-        return  # Already exists
+        return
 
     admin = User(
         username="admin",
         password_hash=get_password_hash("admin123"),
         qq="0000000000",
-        invite_code="ADMIN001",
+        invite_code=None,
         is_admin=True,
     )
     db.add(admin)

@@ -1,11 +1,11 @@
 """Horse model — horse data library with structured previous_result and best_win."""
 
-from datetime import date, datetime
+from datetime import date
 
-from sqlalchemy import Date, DateTime, Integer, JSON, String, func
+from sqlalchemy import Date, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models import Base
+from app.core.database import Base
 
 
 class Horse(Base):
@@ -31,12 +31,3 @@ class Horse(Base):
     # Best win (main victory) — structured fields
     best_win: Mapped[str | None] = mapped_column(String(100), nullable=True)
     best_win_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-
-    manually_updated_fields: Mapped[list | None] = mapped_column(JSON, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )

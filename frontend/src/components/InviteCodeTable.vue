@@ -24,7 +24,6 @@ let copiedTimer: ReturnType<typeof setTimeout> | null = null
 const statusLabels: Record<InviteCodeStatus, string> = {
   unused: '尚未使用',
   used: '已绑定',
-  disabled: '已停用',
 }
 
 const QQ_PATTERN = /^[0-9]{5,20}$/
@@ -109,7 +108,7 @@ const deleteMessage = computed(() => {
   const item = deleteTarget.value
   if (!item) return ''
   return item.status === 'used'
-    ? `确定删除邀请码「{name}」？这会同时删除用户「${item.bound_username}」和该用户的投票记录。若该 QQ 没有其他账户，其历史成绩也会删除。此操作不可撤销！`
+    ? `确定删除邀请码「{name}」？这会同时删除用户「${item.bound_username}」及其投票记录和历史成绩。此操作不可撤销！`
     : '确定删除邀请码「{name}」？此操作不可撤销。'
 })
 

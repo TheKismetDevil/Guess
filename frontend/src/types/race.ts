@@ -8,7 +8,7 @@ export interface RaceListItem {
   sex_restriction: string
   race_grade: string
   country: string
-  distance: string
+  distance: number
   surface: string
   status: RaceStatus
   is_hidden: boolean
@@ -27,7 +27,7 @@ export interface RaceDetail {
   sex_restriction: string
   race_grade: string
   country: string
-  distance: string
+  distance: number
   surface: string
   status: RaceStatus
   is_hidden: boolean
@@ -36,7 +36,6 @@ export interface RaceDetail {
   horse_votes?: RaceDetailHorseVotes | null  // only for settled races
   vote_count: number
   created_at: string
-  updated_at: string
 }
 
 export interface RaceHorseSnapshot {
@@ -45,7 +44,6 @@ export interface RaceHorseSnapshot {
   snapshot_data: HorseSnapshotData
   position: number | null
   gate: number | null
-  weight: string | null
   jockey: string | null
 }
 
@@ -59,7 +57,6 @@ export interface RaceHorseResult {
   horse_id: number
   snapshot_data: Record<string, any>
   position: number | null
-  weight: string | null
   jockey: string | null
   votes: PublicResultVote[]
 }
@@ -104,10 +101,9 @@ export interface RaceCreatePayload {
   sex_restriction: string
   race_grade: string
   country: string
-  distance: string
+  distance: number
   surface: string
   horse_ids?: number[] | null
-  horse_weights?: Record<string, string> | null
   horse_jockeys?: Record<string, string> | null
   custom_scoring?: CustomScoring | null
   is_hidden?: boolean
@@ -120,22 +116,19 @@ export interface RaceUpdatePayload {
   sex_restriction?: string
   race_grade?: string
   country?: string
-  distance?: string
+  distance?: number
   surface?: string
   horse_ids?: number[] | null
-  horse_weights?: Record<string, string> | null
   horse_jockeys?: Record<string, string> | null
   custom_scoring?: CustomScoring | null
 }
 
 export interface RaceHorseUpdatePayload {
-  weight?: string | null
   jockey?: string | null
 }
 
 export interface AddRaceHorsePayload {
   horse_id: number
-  weight?: string | null
   jockey?: string | null
 }
 

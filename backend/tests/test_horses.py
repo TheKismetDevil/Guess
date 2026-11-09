@@ -4,10 +4,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_admin
-from app.core.database import Base
+from app.api.deps import get_current_admin, get_db
 from app.main import app
-from app.models.horse import Horse
 from app.schemas.horse import HorseCreate
 
 
@@ -26,8 +24,6 @@ SAMPLE_HORSE = {
     "origin": "日本",
     "sire": "Kitasan Black",
     "damsire": "Dance in the Dark",
-    "weight": "520kg",
-    "jockey": "C. Lemaire",
     "previous_result": "1着",
     "best_win": "有马纪念(G1)",
 }
@@ -119,8 +115,8 @@ class TestHorseService:
 
     @pytest.mark.asyncio
     async def test_update_horse(self, db_session: AsyncSession):
-        from app.services.horse_service import create_horse, update_horse
         from app.schemas.horse import HorseUpdate
+        from app.services.horse_service import create_horse, update_horse
 
         created = await create_horse(db_session, HorseCreate(name="Original"))
         updated = await update_horse(
@@ -132,9 +128,10 @@ class TestHorseService:
 
     @pytest.mark.asyncio
     async def test_update_horse_not_found(self, db_session: AsyncSession):
-        from app.services.horse_service import update_horse
-        from app.schemas.horse import HorseUpdate
         from fastapi import HTTPException
+
+        from app.schemas.horse import HorseUpdate
+        from app.services.horse_service import update_horse
 
         with pytest.raises(HTTPException) as exc:
             await update_horse(db_session, 9999, HorseUpdate(name="New"))
@@ -142,9 +139,10 @@ class TestHorseService:
 
     @pytest.mark.asyncio
     async def test_update_horse_duplicate_name(self, db_session: AsyncSession):
-        from app.services.horse_service import create_horse, update_horse
-        from app.schemas.horse import HorseUpdate
         from fastapi import HTTPException
+
+        from app.schemas.horse import HorseUpdate
+        from app.services.horse_service import create_horse, update_horse
 
         await create_horse(db_session, HorseCreate(name="A"))
         b = await create_horse(db_session, HorseCreate(name="B"))
@@ -165,8 +163,9 @@ class TestHorseService:
 
     @pytest.mark.asyncio
     async def test_delete_horse_not_found(self, db_session: AsyncSession):
-        from app.services.horse_service import delete_horse
         from fastapi import HTTPException
+
+        from app.services.horse_service import delete_horse
 
         with pytest.raises(HTTPException) as exc:
             await delete_horse(db_session, 9999)
@@ -201,6 +200,7 @@ class TestHorseAPI:
             data = resp.json()
             assert data["data"]["name"] == "Equinox"
             assert data["data"]["sex"] == "牡"
+            assert "manually_updated_fields" not in data["data"]
 
         app.dependency_overrides.clear()
 
@@ -244,6 +244,10 @@ class TestHorseAPI:
             resp = await client.get(f"/api/v1/horses/{horse_id}")
             assert resp.status_code == 200
             assert resp.json()["data"]["name"] == "GetMe"
+
+            # Auto-protection reset endpoint was removed
+            removed = await client.post(f"/api/v1/horses/{horse_id}/reset-auto-protection")
+            assert removed.status_code in (404, 405)
 
         app.dependency_overrides.clear()
 
@@ -317,7 +321,6 @@ class TestHorseAPI:
     @pytest.mark.asyncio
     async def test_unauthenticated_create(self, db_session: AsyncSession):
         app.dependency_overrides[get_db] = lambda: db_session
-        # Do NOT override get_current_admin — no auth token sent
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

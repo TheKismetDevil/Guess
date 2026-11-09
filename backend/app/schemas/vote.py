@@ -16,7 +16,6 @@ class VoteResponse(BaseModel):
     race_horse_id: int
     horse_name: str
     created_at: datetime
-    updated_at: datetime
 
     model_config = {"from_attributes": True}
 

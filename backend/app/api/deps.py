@@ -1,6 +1,4 @@
-from datetime import datetime, timezone
-
-from typing import AsyncGenerator, Optional
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -19,14 +17,7 @@ async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
     db: AsyncSession = Depends(get_db),
 ):
-    """Resolve the current user from JWT token.
-
-    - No token → returns None (guest access)
-    - Valid token → queries DB and returns full User ORM object
-    - Expired token → raises 401 TOKEN_EXPIRED
-    - Invalid token → raises 401 INVALID_TOKEN
-    - Valid token but user not found → raises 401 NOT_AUTHENTICATED
-    """
+    """Resolve the current user from JWT token."""
     if credentials is None:
         return None  # Guest access
 
@@ -53,13 +44,10 @@ async def get_current_user(
             detail={"code": "INVALID_TOKEN", "message": "无效的令牌"},
         )
 
-    # Query DB for full User object
-    result = await db.execute(
-        select(User).where(User.username == username)
-    )
+    result = await db.execute(select(User).where(User.username == username))
     user = result.scalar_one_or_none()
 
-    if user is None:
+    if user is None or user.password_hash is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -74,10 +62,7 @@ async def get_current_user(
 async def get_current_admin(
     current_user: User = Depends(get_current_user),
 ):
-    """Require admin privileges.
-
-    Depends on get_current_user and checks the is_admin flag.
-    """
+    """Require admin privileges."""
     if current_user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -94,12 +79,8 @@ async def get_current_admin(
 async def get_optional_user(
     current_user: Optional[User] = Depends(get_current_user),
 ) -> Optional[User]:
-    """Resolve the current user when a Bearer token is supplied, or None for guests.
+    """Allow guests and propagate 401 from get_current_user for unusable tokens.
 
-    - No token → returns None (guest access on public endpoints)
-    - Valid token → returns full User ORM object
-    - Expired / invalid / unknown-user token → raises 401 (via get_current_user)
-      so authenticated clients trigger silent token refresh or session cleanup
-      instead of silently degrading to guest privileges.
+    Clients can then refresh the session or clear expired credentials.
     """
     return current_user

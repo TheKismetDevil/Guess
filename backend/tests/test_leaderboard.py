@@ -7,11 +7,27 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.historical_score import HistoricalRace, HistoricalScore
 from app.models.race import Race, RaceHorse, RaceStatus
 from app.models.user import User
 from app.models.vote import Vote
 from app.schemas.result import ResultEntry, ResultPosition
 from app.services import result_service
+from app.services.placeholder_user_service import ensure_placeholders
+
+
+async def _add_historical_scores(
+    db: AsyncSession, race_id: int, rows: list[tuple[str, str, int]]
+) -> None:
+    await ensure_placeholders(db, {qq: name for qq, name, _ in rows})
+    users_by_qq = {
+        u.qq: u.id
+        for u in (
+            await db.execute(select(User).where(User.qq.in_([qq for qq, _, _ in rows])))
+        ).scalars()
+    }
+    for qq, _, points in rows:
+        db.add(HistoricalScore(race_id=race_id, user_id=users_by_qq[qq], points=points))
 
 
 @pytest.mark.asyncio
@@ -37,12 +53,8 @@ async def test_live_race_date_and_horse_count_match_leaderboard(async_client, le
 
 @pytest.fixture
 async def leaderboard_data(db_session: AsyncSession) -> dict:
-    """Create data for leaderboard tests: 3 users, 2 races, settled.
-
-    Returns dict with references for assertions.
-    """
-    # Users
-    admin = User(username="admin", password_hash="x", qq="10001", invite_code="AAA", is_admin=True)
+    """Create data for leaderboard tests: 3 users, 2 races, settled."""
+    admin = User(username="admin", password_hash="x", qq="10001", invite_code=None, is_admin=True)
     user1 = User(username="user1", password_hash="x", qq="10002", invite_code="BBB")
     user2 = User(username="user2", password_hash="x", qq="10003", invite_code="CCC")
     user3 = User(username="user3", password_hash="x", qq="10004", invite_code="DDD")  # no votes
@@ -52,8 +64,8 @@ async def leaderboard_data(db_session: AsyncSession) -> dict:
     # Race 1: G1, 4 horses
     race1 = Race(
         name="Race 1", date=date(2026, 6, 1),
-        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance="1200m", surface="草地",
-        status=RaceStatus.LOCKED, creator_id=admin.id,
+        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
+        status=RaceStatus.LOCKED,
     )
     db_session.add(race1)
     await db_session.flush()
@@ -68,14 +80,12 @@ async def leaderboard_data(db_session: AsyncSession) -> dict:
         horses1.append(rh)
     await db_session.flush()
 
-    # User1 votes horse1, User2 votes horse2
     v1r1 = Vote(user_id=user1.id, race_id=race1.id, race_horse_id=horses1[0].id)
     v2r1 = Vote(user_id=user2.id, race_id=race1.id, race_horse_id=horses1[1].id)
     db_session.add_all([v1r1, v2r1])
     await db_session.flush()
     await db_session.refresh(race1, ["race_horses", "votes"])
 
-    # Settle race 1: horse1=1st(+10), horse2=2nd(+5)
     pos1 = [
         ResultPosition(race_horse_id=horses1[0].id, position=1),
         ResultPosition(race_horse_id=horses1[1].id, position=2),
@@ -87,8 +97,8 @@ async def leaderboard_data(db_session: AsyncSession) -> dict:
     # Race 2: G1, 3 horses
     race2 = Race(
         name="Race 2", date=date(2026, 6, 8),
-        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance="1200m", surface="草地",
-        status=RaceStatus.LOCKED, creator_id=admin.id,
+        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
+        status=RaceStatus.LOCKED,
     )
     db_session.add(race2)
     await db_session.flush()
@@ -103,14 +113,12 @@ async def leaderboard_data(db_session: AsyncSession) -> dict:
         horses2.append(rh)
     await db_session.flush()
 
-    # User1 votes horse1, User2 votes horse2 (same pattern)
     v1r2 = Vote(user_id=user1.id, race_id=race2.id, race_horse_id=horses2[0].id)
     v2r2 = Vote(user_id=user2.id, race_id=race2.id, race_horse_id=horses2[1].id)
     db_session.add_all([v1r2, v2r2])
     await db_session.flush()
     await db_session.refresh(race2, ["race_horses", "votes"])
 
-    # Settle race 2: horse1=1st(+10), horse2=2nd(+5)
     pos2 = [
         ResultPosition(race_horse_id=horses2[0].id, position=1),
         ResultPosition(race_horse_id=horses2[1].id, position=2),
@@ -130,8 +138,6 @@ async def test_leaderboard_empty(db_session: AsyncSession):
     from app.services.leaderboard_service import get_leaderboard
 
     entries = await get_leaderboard(db_session)
-    # Users who exist but have no points still appear with 0 totals
-    # Since no users exist in this test, leaderboard is empty
     assert entries == []
 
 
@@ -158,16 +164,13 @@ async def test_leaderboard_single_race(db_session: AsyncSession, leaderboard_dat
     from app.services.leaderboard_service import get_leaderboard
 
     entries = await get_leaderboard(db_session)
-    # Admin excluded from leaderboard; only non-admin users
     assert len(entries) == 3
 
-    # user1 should be first (20 points, avg=10)
     assert entries[0].username == "user1"
     assert entries[0].total_points == 20
     assert entries[0].races_participated == 2
     assert entries[0].avg_points == 10.0
 
-    # user2 should be second (10 points, avg=5)
     assert entries[1].username == "user2"
     assert entries[1].total_points == 10
     assert entries[1].races_participated == 2
@@ -180,7 +183,6 @@ async def test_leaderboard_users_without_votes(db_session: AsyncSession, leaderb
     from app.services.leaderboard_service import get_leaderboard
 
     entries = await get_leaderboard(db_session)
-    # Admin excluded from leaderboard; only user3 has no votes
     bottom_users = [e for e in entries if e.total_points == 0]
     assert len(bottom_users) == 1
     usernames = {e.username for e in bottom_users}
@@ -189,23 +191,17 @@ async def test_leaderboard_users_without_votes(db_session: AsyncSession, leaderb
 
 @pytest.mark.asyncio
 async def test_leaderboard_tie_breaking(db_session: AsyncSession):
-    """Test: tie in total_points → broken by avg_points desc.
-
-    User A: 10pts from 1 race (avg=10.0)
-    User B: 10pts from 2 races (avg=5.0)
-    Same total, but User A higher avg → ranks higher.
-    """
+    """Test: tie in total_points → broken by avg_points desc."""
     from app.services.leaderboard_service import get_leaderboard
 
-    admin = User(username="admin", password_hash="x", qq="10001", invite_code="AAA", is_admin=True)
+    admin = User(username="admin", password_hash="x", qq="10001", invite_code=None, is_admin=True)
     db_session.add(admin)
     await db_session.flush()
 
-    # Race 1: G1, 4 horses — both users vote
     race1 = Race(
         name="Race 1", date=date(2026, 6, 15),
-        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance="1200m", surface="草地",
-        status=RaceStatus.LOCKED, creator_id=admin.id,
+        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
+        status=RaceStatus.LOCKED,
     )
     db_session.add(race1)
     await db_session.flush()
@@ -228,7 +224,6 @@ async def test_leaderboard_tie_breaking(db_session: AsyncSession):
     await db_session.flush()
     await db_session.refresh(race1, ["race_horses", "votes"])
 
-    # Settle race 1: horse1=1st(+10 for user_a), horse2=2nd(+5 for user_b)
     pos1 = [
         ResultPosition(race_horse_id=horses[0].id, position=1),
         ResultPosition(race_horse_id=horses[1].id, position=2),
@@ -237,12 +232,10 @@ async def test_leaderboard_tie_breaking(db_session: AsyncSession):
     ]
     await result_service.submit_results(db_session, race1.id, ResultEntry(positions=pos1))
 
-    # Race 2: G1, 3 horses — only user_b votes, gets 2nd position (+5)
-    # Result: user_a=10pts(1 race avg=10), user_b=10pts(2 races avg=5)
     race2 = Race(
         name="Race 2", date=date(2026, 6, 16),
-        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance="1200m", surface="草地",
-        status=RaceStatus.LOCKED, creator_id=admin.id,
+        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
+        status=RaceStatus.LOCKED,
     )
     db_session.add(race2)
     await db_session.flush()
@@ -254,7 +247,6 @@ async def test_leaderboard_tie_breaking(db_session: AsyncSession):
         h2.append(rh)
     await db_session.flush()
 
-    # user_b votes for h2[1] which will finish 2nd (+5pts)
     v_b2 = Vote(user_id=user_b.id, race_id=race2.id, race_horse_id=h2[1].id)
     db_session.add(v_b2)
     await db_session.flush()
@@ -262,12 +254,11 @@ async def test_leaderboard_tie_breaking(db_session: AsyncSession):
 
     pos2 = [
         ResultPosition(race_horse_id=h2[0].id, position=1),
-        ResultPosition(race_horse_id=h2[1].id, position=2),  # user_b's horse = 2nd → +5pts
+        ResultPosition(race_horse_id=h2[1].id, position=2),
         ResultPosition(race_horse_id=h2[2].id, position=3),
     ]
     await result_service.submit_results(db_session, race2.id, ResultEntry(positions=pos2))
 
-    # Verify tie-breaking: same total (10), user_a higher avg → ranks first
     entries = await get_leaderboard(db_session)
     assert entries[0].username == "user_a", f"Expected user_a first, got {entries[0].username}"
     assert entries[0].total_points == 10
@@ -285,15 +276,15 @@ async def test_leaderboard_dnf_handling(db_session: AsyncSession):
     """Test: user voting for DNF horse gets 0 points, still appears in leaderboard."""
     from app.services.leaderboard_service import get_leaderboard
 
-    admin = User(username="admin", password_hash="x", qq="30001", invite_code="EEE", is_admin=True)
+    admin = User(username="admin", password_hash="x", qq="30001", invite_code=None, is_admin=True)
     user = User(username="dnf_user", password_hash="x", qq="30002", invite_code="FFF")
     db_session.add_all([admin, user])
     await db_session.flush()
 
     race = Race(
         name="DNF Race", date=date(2026, 6, 15),
-        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance="1200m", surface="草地",
-        status=RaceStatus.LOCKED, creator_id=admin.id,
+        age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
+        status=RaceStatus.LOCKED,
     )
     db_session.add(race)
     await db_session.flush()
@@ -305,13 +296,11 @@ async def test_leaderboard_dnf_handling(db_session: AsyncSession):
         horses.append(rh)
     await db_session.flush()
 
-    # User votes for horse3 (will be DNF)
     vote = Vote(user_id=user.id, race_id=race.id, race_horse_id=horses[2].id)
     db_session.add(vote)
     await db_session.flush()
     await db_session.refresh(race, ["race_horses", "votes"])
 
-    # Settle: horse3 is DNF (position=0)
     pos = [
         ResultPosition(race_horse_id=horses[0].id, position=1),
         ResultPosition(race_horse_id=horses[1].id, position=2),
@@ -320,7 +309,6 @@ async def test_leaderboard_dnf_handling(db_session: AsyncSession):
     await result_service.submit_results(db_session, race.id, ResultEntry(positions=pos))
 
     entries = await get_leaderboard(db_session)
-    # User should appear with 0 points, 1 race, 0.0 avg
     dnf_user = next(e for e in entries if e.username == "dnf_user")
     assert dnf_user.total_points == 0
     assert dnf_user.races_participated == 1
@@ -347,7 +335,6 @@ async def test_leaderboard_endpoint_integration(
     data = resp.json()["data"]
     assert len(data) == 3
 
-    # First entry should be user1 (20pts)
     assert data[0]["username"] == "user1"
     assert data[0]["total_points"] == 20
     assert data[0]["races_participated"] == 2
@@ -355,17 +342,19 @@ async def test_leaderboard_endpoint_integration(
 
 
 async def test_average_ranking_and_three_decimal_response(async_client, db_session):
-    from app.models.historical_score import HistoricalRace, HistoricalScore
     for index in range(3):
         race = HistoricalRace(name=f'平均分测试{index}', date=date(2026, 1, index + 1), age_range='3岁',
             sex_restriction='无', race_grade='G1' if index == 0 else 'G2', country='日本',
             surface='草地', distance=1600, horse_count=12)
         db_session.add(race)
         await db_session.flush()
-        db_session.add_all([HistoricalScore(race_id=race.id, qq='20002', display_name='总分更高', points=6),
-            HistoricalScore(race_id=race.id, qq='20003', display_name='负分用户', points=-1 if index == 2 else 0)])
+        rows = [
+            ('20002', '总分更高', 6),
+            ('20003', '负分用户', -1 if index == 2 else 0),
+        ]
         if index < 2:
-            db_session.add(HistoricalScore(race_id=race.id, qq='20001', display_name='场均更高', points=7))
+            rows.append(('20001', '场均更高', 7))
+        await _add_historical_scores(db_session, race.id, rows)
     await db_session.flush()
     base = '/api/v1/leaderboard'
     total = (await async_client.get(base)).json()['data']
@@ -380,17 +369,21 @@ async def test_average_ranking_and_three_decimal_response(async_client, db_sessi
 
 
 async def test_rounded_average_ties_are_sorted_using_exact_values(db_session):
-    from app.models.historical_score import HistoricalRace, HistoricalScore
     from app.services.leaderboard_service import get_leaderboard
     # 2/61 > 3/92; both display 0.033 and both exceed the 60% participation threshold.
+    await ensure_placeholders(db_session, {'30001': '总分2', '30002': '总分3'})
+    users_by_qq = {
+        u.qq: u.id
+        for u in (await db_session.execute(select(User).where(User.qq.in_(['30001', '30002'])))).scalars()
+    }
     for index in range(92):
         race = HistoricalRace(name=f'精度测试{index}', date=date(2026, 1, 1), age_range='3岁',
             sex_restriction='无', race_grade='G1', country='日本', surface='草地', distance=1600, horse_count=12)
         db_session.add(race)
         await db_session.flush()
-        db_session.add(HistoricalScore(race_id=race.id, qq='30002', display_name='总分3', points=3 if index == 0 else 0))
+        db_session.add(HistoricalScore(race_id=race.id, user_id=users_by_qq['30002'], points=3 if index == 0 else 0))
         if index < 61:
-            db_session.add(HistoricalScore(race_id=race.id, qq='30001', display_name='总分2', points=2 if index == 0 else 0))
+            db_session.add(HistoricalScore(race_id=race.id, user_id=users_by_qq['30001'], points=2 if index == 0 else 0))
     await db_session.flush()
     entries = await get_leaderboard(db_session, sort_by='avg_points')
     assert [e.username for e in entries] == ['总分2', '总分3']
@@ -398,12 +391,11 @@ async def test_rounded_average_ties_are_sorted_using_exact_values(db_session):
 
 
 async def test_average_uses_combined_live_and_history_scores(async_client, db_session, leaderboard_data):
-    from app.models.historical_score import HistoricalRace, HistoricalScore
     race = HistoricalRace(name='旧成绩', date=date(2026, 1, 1), age_range='3岁', sex_restriction='无',
         race_grade='G1', country='日本', surface='草地', distance=1600, horse_count=12)
     db_session.add(race)
     await db_session.flush()
-    db_session.add(HistoricalScore(race_id=race.id, qq='10002', display_name='旧昵称', points=0))
+    await _add_historical_scores(db_session, race.id, [('10002', '旧昵称', 0)])
     await db_session.flush()
     result = (await async_client.get('/api/v1/leaderboard', params={'sort_by': 'avg_points'})).json()['data']
     person = next(e for e in result if e['username'] == 'user1')
@@ -411,25 +403,27 @@ async def test_average_uses_combined_live_and_history_scores(async_client, db_se
 
 
 async def test_average_participation_cutoff_uses_filtered_scored_races(async_client, db_session):
-    from app.models.historical_score import HistoricalRace, HistoricalScore
     db_session.add_all([
-        User(username='管理员', password_hash='x', qq='90000', invite_code='ADMIN', is_admin=True),
+        User(username='管理员', password_hash='x', qq='90000', invite_code=None, is_admin=True),
         User(username='未参与', password_hash='x', qq='90001', invite_code='NONE'),
     ])
+    await db_session.flush()
     for index in range(7):
         race = HistoricalRace(name=f'门槛测试{index}', date=date(2026, 2, index + 1), age_range='3岁',
             sex_restriction='无', race_grade='G1' if index < 3 else 'G2', country='日本',
             surface='草地', distance=1600, horse_count=12)
         db_session.add(race)
         await db_session.flush()
+        rows = []
         if index < 5:
-            db_session.add(HistoricalScore(race_id=race.id, qq='91000', display_name='参加5场', points=1))
+            rows.append(('91000', '参加5场', 1))
         if index < 3:
-            db_session.add(HistoricalScore(race_id=race.id, qq='91001', display_name='恰好60%', points=0))
+            rows.append(('91001', '恰好60%', 0))
         if index < 2:
-            db_session.add(HistoricalScore(race_id=race.id, qq='91002', display_name='低于60%', points=1000))
+            rows.append(('91002', '低于60%', 1000))
         if index == 5:
-            db_session.add(HistoricalScore(race_id=race.id, qq='90000', display_name='管理员', points=1000))
+            rows.append(('90000', '管理员', 1000))
+        await _add_historical_scores(db_session, race.id, rows)
     await db_session.flush()
     base = '/api/v1/leaderboard'
     total = (await async_client.get(base)).json()['data']
@@ -446,13 +440,12 @@ async def test_average_participation_cutoff_uses_filtered_scored_races(async_cli
 
 
 async def test_average_denominator_is_distinct_races_not_max_user_participation(async_client, db_session):
-    from app.models.historical_score import HistoricalRace, HistoricalScore
     for index in range(5):
         race = HistoricalRace(name=f'各投一场{index}', date=date(2026, 3, index + 1), age_range='3岁',
             sex_restriction='无', race_grade='G1', country='日本', surface='草地', distance=1600, horse_count=12)
         db_session.add(race)
         await db_session.flush()
-        db_session.add(HistoricalScore(race_id=race.id, qq=f'9200{index}', display_name=f'选手{index}', points=10))
+        await _add_historical_scores(db_session, race.id, [(f'9200{index}', f'选手{index}', 10)])
     await db_session.flush()
     base = '/api/v1/leaderboard'
     assert len((await async_client.get(base)).json()['data']) == 5

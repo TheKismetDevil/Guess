@@ -11,11 +11,11 @@ from app.api.deps import get_current_admin, get_current_user
 from app.core.database import get_db
 from app.main import app
 from app.models.horse import Horse
-from app.models.race import Race, RaceHorse, RaceStatus
-from app.services import vote_service
-from app.services.race_service import create_race
+from app.models.race import Race, RaceStatus
 from app.schemas.horse import HorseCreate
 from app.schemas.race import RaceCreate
+from app.services import vote_service
+from app.services.race_service import create_race
 
 
 # --- Override dependencies ---
@@ -26,6 +26,7 @@ async def override_get_admin():
         "username": "admin",
         "is_admin": True,
     })()
+
 
 async def override_get_current_user():
     return type("CurrentUser", (), {
@@ -62,10 +63,9 @@ async def _create_voting_race(
         RaceCreate(
             name="Test Race", date=date(2026, 6, 15),
             age_range="其他", sex_restriction="无", race_grade="G1",
-            country="日本", distance="1200m", surface="草地",
+            country="日本", distance=1200, surface="草地",
             horse_ids=horse_ids,
         ),
-        creator_id=1,
     )
 
 
@@ -310,7 +310,6 @@ class TestVoteAPI:
         rh = race.race_horses[0]
 
         app.dependency_overrides[get_db] = lambda: db_session
-        # No current_user override — original get_current_user runs with no token
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -345,7 +344,6 @@ class TestVoteAPI:
         """Test that non-admin POST /races/{id}/lock returns 403."""
         race = await _create_voting_race(db_session)
 
-        # Only override get_current_user with non-admin — do NOT override get_current_admin
         app.dependency_overrides[get_db] = lambda: db_session
         app.dependency_overrides[get_current_user] = override_get_current_user
 
@@ -361,7 +359,6 @@ class TestVoteAPI:
         race = await _create_voting_race(db_session)
         rh1 = race.race_horses[0]
 
-        # Add a vote directly
         await vote_service.create_or_update_vote(
             db_session, race_id=race.id, user_id=2, race_horse_id=rh1.id
         )
