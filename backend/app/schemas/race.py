@@ -73,7 +73,7 @@ class RaceCreate(BaseModel):
     @field_validator("race_grade")
     @classmethod
     def validate_race_grade(cls, v: str) -> str:
-        allowed = {"G1", "G2", "G3", "JPN1", "JPN2", "其他", "自定义"}
+        allowed = {"G1", "G2", "JPN1", "其他", "自定义"}
         if v not in allowed:
             raise ValueError(f"无效的比赛等级，允许的值: {', '.join(allowed)}")
         return v
@@ -157,7 +157,7 @@ class RaceUpdate(BaseModel):
     @classmethod
     def validate_race_grade(cls, v: str | None) -> str | None:
         if v is not None:
-            allowed = {"G1", "G2", "G3", "JPN1", "JPN2", "其他", "自定义"}
+            allowed = {"G1", "G2", "JPN1", "其他", "自定义"}
             if v not in allowed:
                 raise ValueError(f"无效的比赛等级，允许的值: {', '.join(allowed)}")
         return v

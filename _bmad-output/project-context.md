@@ -218,7 +218,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 **Edge cases:**
 - Race horse data uses **snapshot** mechanism — horse attributes at creation time are frozen in `RaceHorse.snapshot_data` JSON. Race detail pages read from snapshot_data, NOT the live Horse table. Editing a race does NOT update existing snapshots; new horses added via edit get fresh snapshots at add time.
 - Race status machine: `voting` → `locked` → `settled` (one direction). Only `voting` races are editable. `locked` races block voting. `settled` races are final (can only modify results).
-- Race grade replaced with **6-tag system**: `age_range`（2岁/2+岁/3岁/3+岁/4+岁/其他）, `sex_restriction`（无/牝限/牡牝限/牡限）, `race_grade`（G1/G2/G3/JPN1/JPN2/其他/自定义）, `country`（日本/英国/美国/.../其他）, `distance`（自由输入字符串如"1200m"）, `surface`（草地/泥地/全天候/其他）。Custom scoring 只在使用 `race_grade="自定义"` 时生效，格式: `{"positive_scores": [10,7,5,3,2,1], "penalty_rules": [{"position": -1, "points": -5}]}`。旧 `GradeEnum` 已移除。`sex_restriction` 为"无"时前端不渲染对应 tag。
+- Race grade replaced with **6-tag system**: `age_range`（2岁/2+岁/3岁/3+岁/4+岁/其他）, `sex_restriction`（无/牝限/牡牝限/牡限）, `race_grade`（G1/G2/JPN1/其他/自定义）, `country`（日本/英国/美国/.../其他）, `distance`（自由输入字符串如"1200m"）, `surface`（草地/泥地/全天候/障碍/其他）。Custom scoring 只在使用 `race_grade="自定义"` 时生效，格式: `{"positive_scores": [10,7,5,3,2,1], "penalty_rules": [{"position": -1, "points": -5}]}`。旧 `GradeEnum` 已移除。`sex_restriction` 为"无"时前端不渲染对应 tag。
 - Settled races cannot be deleted — only result modification with full rollback/recalculate. `voting` 和 `locked` 状态的比赛可以删除（含级联删除投票记录）。删除操作需要管理员权限和二次确认弹窗，使用 `ConfirmDeleteModal` 组件。
 - `HomePage.vue` 底部悬浮按钮创建比赛（管理员可见），带有弹窗。管理后台通过首页管理入口旁的下拉菜单访问。
 - DNF/scratched horses score 0 points and are excluded from deduction calculation denominators
@@ -257,7 +257,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - 新增 `derive_scoring_grade(age_range: str, race_grade: str) -> str` 将 5-tag 映射到 4 种评分模式：`"2岁"+G1→YOUNG_G1`、非G1/非自定义→G2_JPN1、自定义→CUSTOM、其他→G1。结算时调用 `calculate_score(grade=derive_scoring_grade(...))`。
 - G1 扣分使用**绝对位置转换公式**：`penalty_position = total_horses + offset + 1`，其中 `offset` 为负数（-1=最后一名，-2=倒数第二名，依此类推）。
 - G1 扣分分档：≥8匹扣末3名(-10/-5/-1)、7匹扣末2名(-5/-1)、6匹扣末1名(-1)、≤5匹无扣分。
-- G2_JPN1：正分 +5/+4/+3/+2/+1，不扣分。
+- G2_JPN1：正分 +5/+3/+1（仅前三名），不扣分。
 - YOUNG_G1：正分同 G1（+10/+5/+3/+2/+1），不扣分。
 - CUSTOM：从 `custom_scoring` 字典读取 `positive_scores`（list[int]，1-indexed）和可选的 `penalty_rules`（list[dict]，position 为负偏移，points 为扣分值）。若某名次同时有正序积分和扣分，则**加分优先**（豁免扣分），与 G1 原则一致——一个名次不会既加分又扣分。
 - DNF/退赛：`position <= 0` 返回 0 分。
@@ -338,7 +338,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **排行榜排序菜单**：`LeaderboardSortSelect.vue` 使用 `defineModel<LeaderboardSort>`，选择改变后发出 `change`。使用页面内自定义 listbox（白底、圆角、阴影、绿色选中项及勾选图标），不再使用原生 `<select>` 展开菜单。支持方向键/Home/End 导航、Enter/空格确认、Esc/Tab/点击外部/焦点离开关闭；触发器保持焦点，使用 `aria-activedescendant` 标记活动选项。
 - **LeaderboardRow 组件模式**：`LeaderboardRow.vue` 使用原生 `<tr>`/`<td>`，接收 `entry`, `rank`, `isCurrentUser`, `leaderGap`, `previousGap` props。排行榜从第 1 名开始统一使用表格，不再展示前三名领奖台或金色特殊名次；榜首的“距上一名”为 0。保留当前用户高亮、`UserAvatar` QQ 头像（移动端缩小为 22px）及负分红色。
 - **Head to Head**：排行榜使用 `HeadToHeadComparison.vue` + `useHeadToHead.ts`，选择至少两位不同用户，沿用 `appliedFilters`；`/api/v1/leaderboard/participants` 提供稳定身份，`/api/v1/leaderboard/head-to-head` 用 repeated `participant_id` 参数，返回按选择顺序排列的用户列及共同比赛逐场得分。在线场次需已结算且全部所选用户都有非空分数；历史场次按 QQ 与唯一账户关联，QQ 多账户时不自动归属历史成绩。历史身份使用不含原始 QQ 的不透明 ID。0 分/负分计入交集，未公开比赛沿用原有遮蔽规则。组件用请求序号和卸载保护阻止旧查询覆盖新结果。
-- **历史成绩管理**：管理员入口 `/admin/historical-scores`（管理菜单和排行榜均有链接）。Excel 先调用 `/api/v1/admin/historical-scores/preview` 预览，再携带 `preview_token` 确认导入；预览不写库，数据变化返回 409。`historical_import_batches` 记录批次和撤销状态，`historical_races.import_batch_id` 关联批次；迁移 017 将既有历史记录归为一个批次。历史成绩修正携带 `expected_points` 防止覆盖并发修改。导入参数 `skip_identical`/`skip_empty` 默认均为 true，页面有对应的默认勾选项；0分算有效成绩，0条成绩默认跳过。取消跳过相同记录时使用 `reimport` 更新现有比赛而不创建重复项，取消无成绩过滤时允许空比赛参与导入/差异选择；选项纳入预览令牌，切换后重新预览并清空选择。同名同日期的已导入比赛默认在资料和全部成绩完全一致时跳过；差异逐场选择 `keep`/`replace`，所有冲突必须明确选择且带有效 `preview_token`。迁移 018 的 `historical_import_changes` 保存更新前后完整快照；更新保留原始批次归属，更新批次撤销恢复快照，存在后续有效导入或人工修分冲突时阻止撤销。
+- **历史成绩管理**：管理员入口 `/admin/historical-scores`（管理菜单和排行榜均有链接）。Excel 先调用 `/api/v1/admin/historical-scores/preview` 预览，再携带 `preview_token` 确认导入；预览不写库，数据变化返回 409。导入时场地以 `障碍` 开头统一为 `障碍`，所有障碍赛及非 `G1`/`G2`/`JPN1`/`自定义` 等级（如 `J·G1`、`G3`、`JPN2`）统一归入 `其他`（迁移 021 同步规范化既有数据与导入快照）。`historical_import_batches` 记录批次和撤销状态，`historical_races.import_batch_id` 关联批次；迁移 017 将既有历史记录归为一个批次。历史成绩修正携带 `expected_points` 防止覆盖并发修改。导入参数 `skip_identical`/`skip_empty` 默认均为 true，页面有对应的默认勾选项；0分算有效成绩，0条成绩默认跳过。取消跳过相同记录时使用 `reimport` 更新现有比赛而不创建重复项，取消无成绩过滤时允许空比赛参与导入/差异选择；选项纳入预览令牌，切换后重新预览并清空选择。同名同日期的已导入比赛默认在资料和全部成绩完全一致时跳过；差异逐场选择 `keep`/`replace`，所有冲突必须明确选择且带有效 `preview_token`。迁移 018 的 `historical_import_changes` 保存更新前后完整快照；更新保留原始批次归属，更新批次撤销恢复快照，存在后续有效导入或人工修分冲突时阻止撤销。
 - **LeaderboardPage 模式**：`LeaderboardPage.vue` 使用 PageState 枚举（loading/empty/error/success）。success 态渲染原生 `<table>`（`<thead>`+`<th scope="col">`+`<tbody>`+`LeaderboardRow` as `<tr>`）。useDragSort composable 外的结构化表格数据优先使用原生 `<table>` 保证列对齐（与 DashboardPage、HorsesPage 一致）。empty 态条件：`data.length === 0 || data.every(e => e.races_participated === 0)`。
 - **LeaderboardPage 筛选交互模式**：多选标签和数字范围输入修改后**不立即触发 API**——用户选完所有条件后点击绿色实心"应用筛选"按钮一次性提交。"清除筛选"按钮立即生效。`v-model.number` 清空后产生空字符串 `""` → 使用 `toNum()` 辅助函数（`typeof v === 'number' && !isNaN(v) ? v : undefined`）过滤为非数字值。`hasActiveFilters()` 必须检查所有 7 个筛选维度（6 个 tag 数组 + 4 个数字范围），确保 surface 等维度不遗漏。
 - **排行榜排除 admin 模式**：`leaderboard_service.get_leaderboard()` 查询中添加 `.where(User.is_admin == False)` 过滤 admin 用户。admin 不能投票，无有效积分，不应出现在排行榜中。
@@ -419,7 +419,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **列表逐项入场**：给条目加 `.ui-stagger` + `:style="{ '--i': index }"`，但 class 只能在首次出现时挂上——用 `useRevealOnce()` 的 `revealing` 控制（`reveal(count)` 后自动在动画结束时撤掉）。原因：CSS 动画在节点被重新插入时会重播，常驻 class 会让拖拽排序（DOM 移动）时卡片反复闪入。
 - `useCountUp(source, duration)` / `CountUpNumber.vue`：数字缓动递增，`prefers-reduced-motion` 时直接跳到终值。
 - `base.css` 的 reduced-motion 全局规则同时把 `animation-delay` / `transition-delay` 置 0，避免逐项入场在关闭动效时仍有延迟空白。
-- 复用组件：`RaceTags.vue`（6 个标签 chip；G1 金、G2 银、G3 铜、JPN 青、自定义紫，场地带色点；`on-dark` 用于详情页深色横幅）、`HiddenToggleButton.vue`（管理员眼睛按钮，内部 `@click.stop`）、`BrandMark.vue`（金色马蹄铁 logo，渐变 id 用 `useId()` 保证每个实例唯一）、`AuthShell.vue`（登录/注册/重置密码共用外壳，表单控件用 `ui-*`）。
+- 复用组件：`RaceTags.vue`（6 个标签 chip；G1 金、G2 银、JPN1 青、自定义紫，场地带色点；`on-dark` 用于详情页深色横幅）、`HiddenToggleButton.vue`（管理员眼睛按钮，内部 `@click.stop`）、`BrandMark.vue`（金色马蹄铁 logo，渐变 id 用 `useId()` 保证每个实例唯一）、`AuthShell.vue`（登录/注册/重置密码共用外壳，表单控件用 `ui-*`）。
 - 选项常量统一在 `src/constants/raceOptions.ts`（`AGE_RANGE_OPTIONS` 等），首页创建弹窗与排行榜筛选共用，新增选项只改这一处。
 - 比赛详情页顶部为品牌色横幅（`.race-hero`，按状态切换配色），`RaceHeaderEditor` 的标题与 ✎ 按钮颜色为 `inherit` 以适配深色背景。
 - `HorseDetailCard.vue` 新增可选 `fieldSize` prop：传入出走头数时右侧闸位块按 **JRA 枠番配色**（`utils/gateBracket.ts`，≤8 头一马一枠，9–18 头按外枠优先补位）。详情页只对 `country === '日本'` 的比赛传入。左侧名次块 1/2/3 名为金/银/铜渐变。
@@ -443,4 +443,4 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Review quarterly for outdated rules
 - Remove rules that become obvious over time
 
-Last Updated: 2026-11-09 (historical QQ placeholder users and proxied QQ avatars)
+Last Updated: 2026-11-09 (race grade retention, steeplechase grade normalization and G2/JPN1 scoring)

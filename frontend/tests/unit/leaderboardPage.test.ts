@@ -57,6 +57,14 @@ describe('ranking page interactions', () => {
     expect(wrapper.get('.average-rule').text()).toContain('至少需参与 1 场')
   })
 
+  it('shows only the five supported race grade filter options', async () => {
+    const wrapper = await mountPage()
+    await wrapper.get('.filter-toggle:not([aria-controls])').trigger('click')
+    const gradeSection = wrapper.findAll('.filter-section').find(s => s.get('.filter-label').text() === '比赛等级')!
+    const labels = gradeSection.findAll('.filter-tag').map(btn => btn.text())
+    expect(labels).toEqual(['G1', 'G2', 'JPN1', '其他', '自定义'])
+  })
+
   it('ignores an older total-score response that arrives after the new average ranking', async () => {
     let finishOld!: (value: typeof row[]) => void
     vi.mocked(api.getLeaderboard).mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))

@@ -13,7 +13,7 @@ from typing import Any
 
 # Positive score tables (1-indexed: position -> points)
 _G1_POSITIVE: dict[int, int] = {1: 10, 2: 5, 3: 3, 4: 2, 5: 1}
-_G2_POSITIVE: dict[int, int] = {1: 5, 2: 4, 3: 3, 4: 2, 5: 1}
+_G2_POSITIVE: dict[int, int] = {1: 5, 2: 3, 3: 1}
 
 # G1 penalty configuration per horse-count tier
 # key: min_horses → list of (offset_from_end, penalty_points)
@@ -116,7 +116,7 @@ def derive_scoring_grade(age_range: str, race_grade: str) -> str:
 
     Args:
         age_range: Age range tag ("2岁", "2+岁", "3岁", "3+岁", "4+岁", "其他").
-        race_grade: Race grade tag ("G1", "G2", "G3", "JPN1", "JPN2", "其他", "自定义").
+        race_grade: Race grade tag ("G1", "G2", "JPN1", "其他", "自定义").
 
     Returns:
         One of "G1", "G2_JPN1", "YOUNG_G1", "CUSTOM".

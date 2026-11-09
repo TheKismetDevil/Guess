@@ -29,14 +29,29 @@ async def test_all_migrations_and_legacy_backfill_preserve_scores(pg_database):
     async with engine.begin() as conn:
         await conn.execute(text("""INSERT INTO historical_races
             (id,name,date,age_range,sex_restriction,race_grade,country,surface,distance,horse_count)
-            VALUES (1,'legacy','2026-01-01','3岁','无','G1','日本','草地',1600,12)"""))
+            VALUES (1,'legacy','2026-01-01','3岁','无','G1','日本','草地',1600,12),
+                   (2,'steeple','2026-01-02','4+岁','无','自定义','日本','障碍',4100,10),
+                   (3,'dropped','2026-01-03','3岁','无','G3','日本','草地',1800,14)"""))
         await conn.execute(text("INSERT INTO historical_scores(race_id,qq,display_name,points) VALUES (1,'12345','legacy user',0)"))
+    await migrate('018')
+    async with engine.begin() as conn:
+        batch_id = (await conn.execute(text('SELECT id FROM historical_import_batches'))).scalar_one()
+        await conn.execute(text("""INSERT INTO historical_import_changes(batch_id, race_id, before, after)
+            VALUES (:b, 2,
+                '{"metadata":{"surface":"障碍","race_grade":"自定义"},"scores":[]}',
+                '{"metadata":{"surface":"草地","race_grade":"G3"},"scores":[]}')"""), {'b': batch_id})
     await migrate()
     async with engine.connect() as conn:
-        assert (await conn.execute(text('SELECT version_num FROM alembic_version'))).scalar_one() == '020'
+        assert (await conn.execute(text('SELECT version_num FROM alembic_version'))).scalar_one() == '021'
         assert (await conn.execute(text('SELECT points FROM historical_scores'))).scalar_one() == 0
-        assert (await conn.execute(text('SELECT count(*) FROM historical_races WHERE import_batch_id IS NOT NULL'))).scalar_one() == 1
-        assert (await conn.execute(text('SELECT imported_races, imported_scores, updated_races FROM historical_import_batches'))).one() == (1, 1, 0)
+        assert (await conn.execute(text('SELECT count(*) FROM historical_races WHERE import_batch_id IS NOT NULL'))).scalar_one() == 3
+        assert (await conn.execute(text('SELECT imported_races, imported_scores, updated_races FROM historical_import_batches'))).one() == (3, 1, 0)
+        assert (await conn.execute(text('SELECT id, race_grade FROM historical_races ORDER BY id'))).all() == [
+            (1, 'G1'), (2, '其他'), (3, '其他'),
+        ]
+        change_row = (await conn.execute(text('SELECT before, after FROM historical_import_changes'))).one()
+        assert change_row[0]['metadata']['race_grade'] == '其他'
+        assert change_row[1]['metadata']['race_grade'] == '其他'
 
 
 async def test_qq_migration_preserves_legacy_accounts_and_blocks_new_duplicates(pg_database):

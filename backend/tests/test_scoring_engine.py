@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.scoring_engine import calculate_score
+from app.services.scoring_engine import calculate_score, derive_scoring_grade
 
 
 class TestG1Scoring:
@@ -68,15 +68,15 @@ class TestG1Scoring:
 
 
 class TestG2JPN1Scoring:
-    """AC-3: G2/JPN1 scoring without penalties (FR-13)."""
+    """AC-3: G2/JPN1/其他 scoring without penalties (FR-13): +5/+3/+1 for top 3."""
 
     def test_g2_positive_positions(self):
-        """G2: positions 1-5 get positive scores."""
+        """G2_JPN1: positions 1-3 get +5/+3/+1, 4+ get 0."""
         assert calculate_score("G2_JPN1", 8, 1) == 5
-        assert calculate_score("G2_JPN1", 8, 2) == 4
-        assert calculate_score("G2_JPN1", 8, 3) == 3
-        assert calculate_score("G2_JPN1", 8, 4) == 2
-        assert calculate_score("G2_JPN1", 8, 5) == 1
+        assert calculate_score("G2_JPN1", 8, 2) == 3
+        assert calculate_score("G2_JPN1", 8, 3) == 1
+        assert calculate_score("G2_JPN1", 8, 4) == 0
+        assert calculate_score("G2_JPN1", 8, 5) == 0
 
     def test_g2_no_negative_scores(self):
         """G2: never returns negative, regardless of horse count."""
@@ -85,10 +85,26 @@ class TestG2JPN1Scoring:
         assert calculate_score("G2_JPN1", 15, 15) == 0
 
     def test_g2_5_horses_no_penalty(self):
-        """G2 with 5 horses: no penalties."""
+        """G2 with 5 horses: top 3 get +5/+3/+1, no penalties."""
         assert calculate_score("G2_JPN1", 5, 1) == 5
-        assert calculate_score("G2_JPN1", 5, 5) == 1
+        assert calculate_score("G2_JPN1", 5, 2) == 3
+        assert calculate_score("G2_JPN1", 5, 3) == 1
+        assert calculate_score("G2_JPN1", 5, 4) == 0
+        assert calculate_score("G2_JPN1", 5, 5) == 0
         assert calculate_score("G2_JPN1", 5, 6) == 0
+
+
+class TestDeriveScoringGrade:
+    """Verify race tag mapping to the 4 scoring modes."""
+
+    def test_derive_all_supported_grades(self):
+        assert derive_scoring_grade("2岁", "G1") == "YOUNG_G1"
+        assert derive_scoring_grade("3岁", "G1") == "G1"
+        assert derive_scoring_grade("3+岁", "G1") == "G1"
+        assert derive_scoring_grade("3+岁", "G2") == "G2_JPN1"
+        assert derive_scoring_grade("3岁", "JPN1") == "G2_JPN1"
+        assert derive_scoring_grade("4+岁", "其他") == "G2_JPN1"
+        assert derive_scoring_grade("3+岁", "自定义") == "CUSTOM"
 
 
 class TestYoungG1Scoring:
