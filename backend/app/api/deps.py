@@ -77,27 +77,10 @@ async def get_current_admin(
 
 
 async def get_optional_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
-    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user),
 ) -> Optional[User]:
-    """Resolve the current user from JWT token without raising errors."""
-    if credentials is None:
-        return None
+    """Allow guests and propagate 401 from get_current_user for unusable tokens.
 
-    try:
-        payload = jwt.decode(
-            credentials.credentials,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-        )
-        username: str = payload.get("sub")
-        if username is None:
-            return None
-    except (ExpiredSignatureError, JWTError):
-        return None
-
-    result = await db.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    if user is None or user.password_hash is None:
-        return None
-    return user
+    Clients can then refresh the session or clear expired credentials.
+    """
+    return current_user

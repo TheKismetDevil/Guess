@@ -30,5 +30,16 @@ export function parseJwt(token: string): JwtPayload | null {
 
 export function getTokenExpiry(token: string): number | null {
   const payload = parseJwt(token)
-  return payload?.exp ?? null
+  return typeof payload?.exp === 'number' ? payload.exp : null
+}
+
+/**
+ * Check whether a JWT token is expired (or within `skewSeconds` of expiring).
+ * Non-JWT strings without a numeric `exp` claim return false so opaque test tokens
+ * fall through to server-side validation.
+ */
+export function isTokenExpired(token: string, skewSeconds = 0): boolean {
+  const exp = getTokenExpiry(token)
+  if (exp === null) return false
+  return (exp - skewSeconds) * 1000 <= Date.now()
 }

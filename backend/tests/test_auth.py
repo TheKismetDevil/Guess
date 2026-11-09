@@ -689,3 +689,79 @@ class TestResetPassword:
             },
         )
         assert response.status_code == 422
+
+
+
+class TestOptionalUserTokenExpiry:
+    """Verify optional-auth endpoints return 401 on expired/invalid tokens instead of silently dropping admin rights."""
+
+    @pytest.mark.asyncio
+    async def test_optional_user_endpoints_return_401_on_expired_token_and_succeed_after_refresh(
+        self, db_session: AsyncSession, async_client: AsyncClient
+    ):
+        from datetime import date, datetime, timedelta, timezone
+        from app.models.race import Race
+
+        admin = await create_user(
+            db_session, username="idle_admin", qq="10000000099", is_admin=True
+        )
+        hidden_race = Race(
+            name="隐藏测试赛",
+            date=date(2026, 11, 9),
+            age_range="3+岁",
+            sex_restriction="无",
+            race_grade="G1",
+            country="日本",
+            distance=2400,
+            surface="草地",
+            is_hidden=True,
+        )
+        db_session.add(hidden_race)
+        await db_session.flush()
+
+        # 1. Guest without Authorization header still gets 200 (empty list) and 404 RACE_HIDDEN on detail
+        guest_list = await async_client.get("/api/v1/races")
+        assert guest_list.status_code == 200
+        assert guest_list.json()["data"] == []
+
+        guest_detail = await async_client.get(f"/api/v1/races/{hidden_race.id}")
+        assert guest_detail.status_code == 404
+        assert guest_detail.json()["detail"]["code"] == "RACE_HIDDEN"
+
+        # 2. Admin with an expired access_token gets 401 TOKEN_EXPIRED (NOT 200 guest list or 404 RACE_HIDDEN)
+        expired_access = jwt.encode(
+            {"sub": admin.username, "exp": datetime.now(timezone.utc) - timedelta(minutes=5)},
+            settings.jwt_secret,
+            algorithm=settings.jwt_algorithm,
+        )
+        expired_headers = {"Authorization": f"Bearer {expired_access}"}
+
+        for url in [
+            "/api/v1/races",
+            f"/api/v1/races/{hidden_race.id}",
+            "/api/v1/leaderboard/races",
+            "/api/v1/leaderboard/head-to-head?participant_id=user:1&participant_id=user:2",
+        ]:
+            resp = await async_client.get(url, headers=expired_headers)
+            assert resp.status_code == 401, f"Expected 401 for {url}, got {resp.status_code}"
+            assert resp.json()["detail"]["code"] == "TOKEN_EXPIRED"
+
+        # 3. Refreshing with a valid refresh_token restores full admin visibility on retry
+        valid_refresh = create_refresh_token(data={"sub": admin.username})
+        refresh_resp = await async_client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": valid_refresh},
+        )
+        assert refresh_resp.status_code == 200
+        renewed_access = refresh_resp.json()["data"]["access_token"]
+        renewed_headers = {"Authorization": f"Bearer {renewed_access}"}
+
+        admin_list = await async_client.get("/api/v1/races", headers=renewed_headers)
+        assert admin_list.status_code == 200
+        assert [r["id"] for r in admin_list.json()["data"]] == [hidden_race.id]
+
+        admin_detail = await async_client.get(
+            f"/api/v1/races/{hidden_race.id}", headers=renewed_headers
+        )
+        assert admin_detail.status_code == 200
+        assert admin_detail.json()["data"]["id"] == hidden_race.id

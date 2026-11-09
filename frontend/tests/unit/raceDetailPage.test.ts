@@ -126,7 +126,7 @@ function makeRace(status: RaceStatus): RaceDetail {
   }
 }
 
-async function mountAdminRacePage(status: RaceStatus) {
+async function mountAdminRacePage(status: RaceStatus, isHidden = false) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const authStore = useAuthStore()
@@ -137,7 +137,7 @@ async function mountAdminRacePage(status: RaceStatus) {
     is_admin: true,
   })
 
-  vi.mocked(racesApi.getRace).mockResolvedValue(makeRace(status))
+  vi.mocked(racesApi.getRace).mockResolvedValue({ ...makeRace(status), is_hidden: isHidden })
   vi.mocked(votesApi.getRaceVotes).mockResolvedValue([])
 
   const wrapper = mount(RaceDetailPage, {
@@ -208,5 +208,28 @@ describe('RaceDetailPage horse card layout and delete button visibility', () => 
     expect(wrapper.find('.delete-zone').exists()).toBe(false)
 
     wrapper.unmount()
+  })
+})
+
+describe('RaceDetailPage visibility after a cross-tab logout', () => {
+  it.each([true, false])('rechecks cached race visibility (hidden: %s)', async (isHidden) => {
+    const wrapper = await mountAdminRacePage('voting', isHidden)
+    const authStore = useAuthStore()
+    authStore.persistAuth({ accessToken: 'access', refreshToken: 'refresh', user: authStore.user! })
+    expect(wrapper.find('.race-hero').exists()).toBe(true)
+
+    localStorage.removeItem('auth')
+    window.dispatchEvent(new StorageEvent('storage', { key: 'auth', newValue: null }))
+    await wrapper.vm.$nextTick()
+
+    expect(authStore.isAdmin).toBe(false)
+    expect(wrapper.find('.race-hero').exists()).toBe(!isHidden)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(isHidden)
+    if (isHidden) {
+      expect(wrapper.get('[role="alert"]').text()).toContain('当前比赛已隐藏')
+      expect(wrapper.text()).not.toContain('海都之星')
+    }
+    wrapper.unmount()
+    authStore.$dispose()
   })
 })
