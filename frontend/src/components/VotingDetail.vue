@@ -8,8 +8,15 @@ import {
 } from 'chart.js'
 import type { VoteListEntry } from '@/types/vote'
 import { useCountUp } from '@/composables/useCountUp'
+import UserAvatar from '@/components/UserAvatar.vue'
 
 ChartJS.register(ArcElement, Tooltip)
+
+interface Voter { id: number; username: string; avatarKey: string | null }
+
+function voterNames(voters: Voter[]) {
+  return voters.map(v => v.username).join('、')
+}
 
 const props = defineProps<{
   votes: VoteListEntry[]
@@ -46,13 +53,13 @@ const totalVotes = computed(() => props.votes.length)
 const animatedTotal = useCountUp(totalVotes, 700)
 
 const horseGroups = computed(() => {
-  const groups: Record<string, { count: number; voters: string[] }> = {}
+  const groups: Record<string, { count: number; voters: Voter[] }> = {}
   for (const vote of props.votes) {
     if (!groups[vote.horse_name]) {
       groups[vote.horse_name] = { count: 0, voters: [] }
     }
     groups[vote.horse_name].count++
-    groups[vote.horse_name].voters.push(vote.username)
+    groups[vote.horse_name].voters.push({ id: vote.user_id, username: vote.username, avatarKey: vote.avatar_key ?? null })
   }
   return Object.entries(groups)
     .map(([horseName, data]) => {
@@ -153,7 +160,7 @@ const chartOptions = computed(() => ({
         afterLabel(ctx: any) {
           const group = horseGroups.value[ctx.dataIndex]
           if (!group) return ''
-          const names = group.voters.join('、')
+          const names = voterNames(group.voters)
           return `投票人: ${names}`
         },
       },
@@ -218,7 +225,12 @@ const chartOptions = computed(() => ({
           <div class="legend-bar">
             <span class="legend-bar-fill" :style="{ width: barsReady ? `${group.percentage}%` : '0%' }"></span>
           </div>
-          <p class="legend-voters" :title="group.voters.join('、')">{{ group.voters.join('、') }}</p>
+          <ul class="legend-voters" :aria-label="`投票人：${voterNames(group.voters)}`">
+            <li v-for="voter in group.voters" :key="voter.id" class="voter-chip" :title="voter.username">
+              <UserAvatar :avatar-key="voter.avatarKey" :name="voter.username" :size="20" />
+              <span class="voter-name">{{ voter.username }}</span>
+            </li>
+          </ul>
         </li>
       </ul>
     </div>
@@ -425,12 +437,31 @@ const chartOptions = computed(() => ({
 }
 
 .legend-voters {
-  margin: 0 0 0 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 2px 0 0 18px;
+  padding: 0;
+  list-style: none;
+}
+
+.voter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 140px;
+  padding: 2px 8px 2px 2px;
+  border-radius: var(--rounded-full);
+  background: var(--color-surface-base);
+  font-size: var(--text-caption);
+  color: var(--color-ink-secondary);
+}
+
+.voter-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-caption);
-  color: var(--color-ink-secondary);
 }
 
 @media (max-width: 767px) {

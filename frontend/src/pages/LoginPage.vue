@@ -61,6 +61,10 @@ function validateForm(): boolean {
       errorMessage.value = 'QQ 号不能为空'
       return false
     }
+    if (!/^[0-9]{5,20}$/.test(qq.value.trim())) {
+      errorMessage.value = 'QQ 号必须是 5-20 位数字'
+      return false
+    }
     if (!password.value) {
       errorMessage.value = '密码不能为空'
       return false

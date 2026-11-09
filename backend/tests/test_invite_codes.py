@@ -2,6 +2,7 @@
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -78,7 +79,8 @@ class TestInviteCodeService:
 
         c1 = await create_invite_code(db_session, qq="12345")
         # Manually set bound fields for search testing
-        c1.bound_username = "testuser"
+        row = (await db_session.execute(select(InviteCode).where(InviteCode.code == c1.code))).scalar_one()
+        row.bound_username = "testuser"
         await db_session.flush()
 
         # Search by code
@@ -175,7 +177,8 @@ class TestInviteCodeAPI:
             # Create a code and set bound fields
             from app.services.invite_code_service import create_invite_code
             c = await create_invite_code(db_session, qq="99999")
-            c.bound_username = "founduser"
+            row = (await db_session.execute(select(InviteCode).where(InviteCode.code == c.code))).scalar_one()
+            row.bound_username = "founduser"
             await db_session.flush()
 
             # Search by username

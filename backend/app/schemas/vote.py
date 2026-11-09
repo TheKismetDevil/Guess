@@ -24,6 +24,7 @@ class VoteResponse(BaseModel):
 class VoteListEntry(BaseModel):
     user_id: int
     username: str
+    avatar_key: str | None = None
     race_horse_id: int
     horse_name: str
     points: int | None = None

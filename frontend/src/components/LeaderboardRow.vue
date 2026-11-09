@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { LeaderboardEntry } from '@/types/leaderboard'
+import UserAvatar from '@/components/UserAvatar.vue'
 
 defineProps<{
   entry: LeaderboardEntry
@@ -22,7 +23,7 @@ defineProps<{
     </td>
     <td class="col-name">
       <span class="name-cell">
-        <span class="row-avatar" aria-hidden="true">{{ entry.username.charAt(0).toUpperCase() }}</span>
+        <UserAvatar class="row-avatar" :avatar-key="entry.avatar_key" :name="entry.username" />
         <span class="row-name">{{ entry.username }}</span>
         <span v-if="isCurrentUser" class="me-tag">我</span>
       </span>
@@ -91,22 +92,14 @@ td {
 }
 
 .row-avatar {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
   width: 28px;
   height: 28px;
-  border-radius: 50%;
-  font-family: var(--font-display);
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--color-primary, #1A5632);
-  background: var(--color-primary-tint, #EDF5EF);
 }
 
 .current-user .row-avatar {
   color: #FFFFFF;
   background: var(--gradient-brand-soft);
+  box-shadow: 0 0 0 2px var(--color-primary, #1A5632);
 }
 
 .row-name {
@@ -154,8 +147,10 @@ td {
 }
 
 @media (max-width: 767px) {
-  .row-avatar {
-    display: none;
+  .name-cell .row-avatar {
+    width: 22px;
+    height: 22px;
+    font-size: 11px;
   }
 
   .row-name {

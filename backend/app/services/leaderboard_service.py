@@ -18,6 +18,7 @@ from app.models.vote import Vote
 from app.models.race import Race, RaceHorse
 from app.models.historical_score import HistoricalRace, HistoricalScore
 from app.schemas.leaderboard import LeaderboardEntry
+from app.services.avatar_service import avatar_key
 
 
 async def get_leaderboard(
@@ -154,7 +155,7 @@ async def get_leaderboard(
             history_query = history_query.where(column >= value if is_min else column <= value)
     history_query = history_query.group_by(HistoricalScore.qq)
     admin_qqs = set((await db.execute(select(User.qq).where(User.is_admin == True))).scalars())
-    totals = [[row.username, int(row.total_points or 0), int(row.races_participated or 0)] for row in rows]
+    totals = [[row.username, int(row.total_points or 0), int(row.races_participated or 0), row.qq] for row in rows]
     by_qq = {}
     for row, entry in zip(rows, totals):
         by_qq.setdefault(row.qq, []).append(entry)
@@ -165,11 +166,11 @@ async def get_leaderboard(
         if len(matches) == 1:
             entry = matches[0]
         else:
-            entry = [name, 0, 0]
+            entry = [name, 0, 0, qq]
             totals.append(entry)
         entry[1] += int(points)
         entry[2] += count
-    entries = [LeaderboardEntry(username=name, total_points=points, races_participated=count, avg_points=round(points / count, 3) if count else 0.0) for name, points, count in totals]
+    entries = [LeaderboardEntry(username=name, total_points=points, races_participated=count, avg_points=round(points / count, 3) if count else 0.0, avatar_key=avatar_key(qq)) for name, points, count, qq in totals]
     if sort_by == 'avg_points':
         matching_races = await get_matching_races(db, age_range=age_range, sex_restriction=sex_restriction,
             race_grade=race_grade, country=country, surface=surface, distance_min=distance_min,

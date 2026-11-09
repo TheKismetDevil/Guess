@@ -5,6 +5,8 @@ export interface UserInfo {
   username: string
   qq: string
   is_admin: boolean
+  /** Opaque QQ avatar key; missing in sessions stored before avatars existed. */
+  avatar_key?: string | null
 }
 
 export interface RegisterRequest {

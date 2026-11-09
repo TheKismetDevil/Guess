@@ -1,9 +1,14 @@
-"""Admin-only historical result management. Never changes live races or users."""
+"""Admin-only historical result management.
+
+Never changes live races or registered users; only placeholder users for
+historical QQs are created/removed to follow the remaining historical scores.
+"""
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select, or_
 from app.models.historical_score import HistoricalImportBatch, HistoricalImportChange, HistoricalRace, HistoricalScore
 from app.services.historical_snapshot import current_snapshot, apply_snapshot
+from app.services.placeholder_user_service import ensure_placeholders, remove_orphan_placeholders
 
 
 def not_found():
@@ -83,4 +88,6 @@ async def undo_batch(db, batch_id):
     races = await db.execute(delete(HistoricalRace).where(HistoricalRace.import_batch_id == batch_id))
     batch.undone_at = datetime.now(timezone.utc)
     await db.flush()
+    await ensure_placeholders(db, {s['qq']: s['display_name'] for change in changes for s in change.before['scores']})
+    await remove_orphan_placeholders(db)
     return {'removed_races': races.rowcount, 'removed_scores': scores.rowcount, 'restored_races': len(changes)}

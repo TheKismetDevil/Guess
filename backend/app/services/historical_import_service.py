@@ -10,8 +10,9 @@ from sqlalchemy import select
 from fastapi import HTTPException
 from app.models.historical_score import HistoricalImportBatch, HistoricalImportChange, HistoricalRace, HistoricalScore
 from app.models.race import Race
-from app.models.user import User
 from app.services.historical_snapshot import snapshot, current_snapshot, apply_snapshot, differences
+from app.services.placeholder_user_service import ensure_placeholders, remove_orphan_placeholders
+from app.utils.qq import is_valid_qq
 
 
 def invalid(message):
@@ -76,8 +77,8 @@ def parse_workbook(content: bytes):
             continue
         name = str(row[0] or '').strip()
         qq = str(row[1] or '').strip()
-        if not name or len(name) > 100 or not qq.isdigit() or len(qq) > 20:
-            raise invalid(f'历史得分 A{index}/B{index} 需要用户名（不超过100字）和有效 QQ 号')
+        if not name or len(name) > 100 or not is_valid_qq(qq):
+            raise invalid(f'历史得分 A{index}/B{index} 需要用户名（不超过100字）和有效 QQ 号（5-20 位数字）')
         if qq in seen_qq:
             raise invalid(f'QQ 号重复：{qq}')
         seen_qq.add(qq)
@@ -95,11 +96,6 @@ def parse_workbook(content: bytes):
 
 async def prepare_import(db, content: bytes, lock=False, *, skip_identical=True, skip_empty=True):
     names, metadata, participants = parse_workbook(content)
-    seen_qq = {qq for _, qq, _ in participants}
-    registered = (await db.execute(select(User.qq))).scalars().all()
-    ambiguous = {qq for qq in seen_qq if registered.count(qq) > 1}
-    if ambiguous:
-        raise invalid('存在多个账户使用同一 QQ，请先处理：' + '、'.join(sorted(ambiguous)))
     existing_live = set((await db.execute(select(Race.name, Race.date))).all())
     query = select(HistoricalRace).order_by(HistoricalRace.id)
     if lock:
@@ -160,6 +156,7 @@ async def import_workbook(db, content: bytes, filename='历史得分.xlsx', prev
             imported_scores=preview['imported_scores'], updated_races=updated)
         db.add(batch)
         await db.flush()
+    people = {}
     for item in preview['races']:
         race, before, incoming = states[item['name']]
         if item['action'] == 'skip' or (item['action'] == 'conflict' and decisions[str(item['race_id'])] == 'keep'):
@@ -171,8 +168,12 @@ async def import_workbook(db, content: bytes, filename='历史得分.xlsx', prev
         else:
             db.add(HistoricalImportChange(batch_id=batch.id, race_id=race.id, before=before, after=incoming))
         await apply_snapshot(db, race, incoming)
+        people.update({score['qq']: score['display_name'] for score in incoming['scores']})
     await db.flush()
+    # Every historical QQ gets an account: placeholders are activated on registration.
+    placeholder_users = await ensure_placeholders(db, people)
+    await remove_orphan_placeholders(db)
     return {key: preview[key] for key in ('imported_races', 'imported_scores')} | {
         'updated_races': updated, 'skipped_races': preview['skipped_races'] + [r['name'] for r in preview['races']
             if r['action'] == 'conflict' and decisions[str(r['race_id'])] == 'keep'],
-        'batch_id': batch.id if batch else None}
+        'batch_id': batch.id if batch else None, 'placeholder_users': placeholder_users}

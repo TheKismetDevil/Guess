@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import get_current_admin
 from app.core.database import get_db
-from app.schemas.invite_code import InviteCodeCreate, InviteCodeResponse
+from app.schemas.invite_code import InviteCodeCreate
 from app.services import invite_code_service
 from app.services import historical_management_service as history
 from app.schemas.historical import HistoricalScoreUpdate
@@ -83,7 +83,7 @@ async def list_invite_codes(
 ):
     """Get all invite codes, optionally filtered by search."""
     codes = await invite_code_service.get_invite_codes(db, search)
-    return {"data": [InviteCodeResponse.model_validate(c) for c in codes]}
+    return {"data": codes}
 
 
 @router.post("/invite-codes", status_code=201, response_model=dict)
@@ -92,9 +92,9 @@ async def create_invite_code(
     db: AsyncSession = Depends(get_db),
     _admin=Depends(get_current_admin),
 ):
-    """Generate a new invite code bound to a QQ number."""
+    """Generate a new invite code bound to a QQ number (one account per QQ)."""
     code = await invite_code_service.create_invite_code(db, request.qq)
-    return {"data": InviteCodeResponse.model_validate(code)}
+    return {"data": code}
 
 
 @router.delete("/invite-codes/{code}", status_code=204)
@@ -103,5 +103,8 @@ async def delete_invite_code(
     db: AsyncSession = Depends(get_db),
     _admin=Depends(get_current_admin),
 ):
-    """Delete an invite code and cascade delete its bound user and votes."""
+    """Delete an invite code and cascade delete its bound user, votes and historical scores.
+
+    Placeholder users' codes are protected (409 PLACEHOLDER_PROTECTED).
+    """
     await invite_code_service.delete_invite_code_cascade(db, code)

@@ -57,7 +57,7 @@ async def test_live_and_history_are_combined_and_registered_qq_is_linked(db_sess
     assert len({r['key'] for r in result['races']}) == 3
     people = await get_participants(db_session)
     assert [p['username'] for p in people] == ['user1', 'user2', 'user3']
-    assert all(set(p) == {'id', 'username', 'kind'} for p in people)
+    assert all(set(p) == {'id', 'username', 'kind', 'avatar_key'} for p in people)
 
 
 async def test_historical_only_users_and_all_race_filters(db_session, leaderboard_data):
@@ -86,9 +86,8 @@ async def test_unsettled_and_missing_points_are_not_treated_as_zero(db_session, 
     assert (await compare(db_session, [user_key(data['user1']), user_key(data['user2'])]))['races'] == []
 
 
-async def test_admin_and_ambiguous_qq_are_not_merged(db_session, leaderboard_data):
-    db_session.add(User(username='重复QQ用户', qq='10002', password_hash='x', invite_code='QQDUP'))
-    await historical_race(db_session, 'QQ重复赛', date(2026, 7, 1), [('10002', '历史独立身份', 3), ('10001', '管理员旧名', 99)])
+async def test_admin_qq_is_not_merged_and_unregistered_history_stays_separate(db_session, leaderboard_data):
+    await historical_race(db_session, 'QQ独立赛', date(2026, 7, 1), [('10099', '历史独立身份', 3), ('10001', '管理员旧名', 99)])
     people = await get_participants(db_session)
     assert '管理员旧名' not in [p['username'] for p in people]
     assert user_key(leaderboard_data['admin']) not in [p['id'] for p in people]

@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.models.user import User
 from app.schemas.vote import VoteCreate, VoteListEntry, VoteResponse
 from app.services import vote_service
+from app.services.avatar_service import avatar_key
 
 router = APIRouter(prefix="/api/v1/races", tags=["votes"])
 
@@ -72,6 +73,7 @@ async def list_votes(
         VoteListEntry(
             user_id=v.user_id,
             username=v.user.username if v.user else "unknown",
+            avatar_key=avatar_key(v.user.qq) if v.user else None,
             race_horse_id=v.race_horse_id,
             horse_name=vote_service.resolve_horse_name(v),
             points=v.points,

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy import Boolean, DateTime, Index, String, false, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
@@ -10,13 +10,17 @@ from app.models import Base
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (Index("uq_users_qq", "qq", unique=True,
+                            postgresql_where=text("NOT legacy_duplicate_qq"),
+                            sqlite_where=text("NOT legacy_duplicate_qq")),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(
         String(50), unique=True, nullable=False, index=True
     )
     password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
-    qq: Mapped[str] = mapped_column(String(20), nullable=False)
+    qq: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    legacy_duplicate_qq: Mapped[bool] = mapped_column(Boolean, server_default=false())
     invite_code: Mapped[str] = mapped_column(String(8), nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 

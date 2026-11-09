@@ -42,8 +42,8 @@ function validateForm(): boolean {
     fieldErrors.value.qq = 'QQ 号不能为空'
     return false
   }
-  if (qq.value.trim().length < 5 || qq.value.trim().length > 20) {
-    fieldErrors.value.qq = 'QQ 号长度需在 5-20 个字符之间'
+  if (!/^[0-9]{5,20}$/.test(qq.value.trim())) {
+    fieldErrors.value.qq = 'QQ 号必须是 5-20 位数字'
     return false
   }
 

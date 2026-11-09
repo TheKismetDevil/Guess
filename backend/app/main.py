@@ -18,7 +18,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await seed_admin(db)
         await db.commit()
     yield
-    # Shutdown: dispose database engine
+    # Shutdown: close shared HTTP client and dispose database engine
+    from app.services.avatar_service import close_client
+    await close_client()
     await engine.dispose()
 
 

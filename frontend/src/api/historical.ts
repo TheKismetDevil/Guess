@@ -7,7 +7,7 @@ export async function previewHistory(content: ArrayBuffer, options: HistoryImpor
   return (await api.post<{ data: ImportPreview }>('/admin/historical-scores/preview', content, { headers: uploadHeaders, params: options })).data.data
 }
 export async function importHistory(content: ArrayBuffer, filename: string, preview_token: string, decisions: Record<string, ImportDecision>, options: HistoryImportOptions) {
-  return (await api.post<{ data: { imported_races: number; imported_scores: number; updated_races: number; skipped_races: string[] } }>('/admin/historical-scores', content,
+  return (await api.post<{ data: { imported_races: number; imported_scores: number; updated_races: number; skipped_races: string[]; placeholder_users?: number } }>('/admin/historical-scores', content,
     { headers: uploadHeaders, params: { filename, preview_token, decisions: JSON.stringify(decisions), ...options } })).data.data
 }
 export async function getHistoryBatches() {
