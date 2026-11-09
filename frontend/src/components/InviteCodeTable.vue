@@ -260,6 +260,7 @@ onUnmounted(() => {
               <td class="col-actions">
                 <div class="row-actions">
                   <button
+                    type="button"
                     class="row-btn"
                     :class="{ 'is-copied': copiedCode === item.code }"
                     :aria-label="`复制邀请码 ${item.code}`"
@@ -275,12 +276,18 @@ onUnmounted(() => {
                   </button>
                   <span
                     v-if="item.placeholder_username"
-                    class="protected-note"
+                    class="protected-note row-action-end"
                     title="占位用户由历史成绩导入创建，不能删除；对方用该 QQ 和邀请码注册后即成为正式用户"
-                  >不可删除</span>
+                  >
+                    <svg class="protected-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                    </svg>
+                    <span class="protected-note-label">不可删除</span>
+                  </span>
                   <button
                     v-else
-                    class="row-btn row-btn-danger"
+                    type="button"
+                    class="row-btn row-btn-danger row-action-end"
                     :aria-label="`删除邀请码 ${item.code}`"
                     @click="handleDelete(item)"
                   >
@@ -574,12 +581,6 @@ tbody tr.is-new {
   color: var(--color-ink-secondary);
 }
 
-.protected-note {
-  font-size: 12px;
-  color: var(--color-ink-disabled);
-  white-space: nowrap;
-}
-
 .muted {
   color: var(--color-ink-disabled);
 }
@@ -591,24 +592,49 @@ tbody tr.is-new {
 
 .row-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 4px;
+  min-width: 148px;
 }
 
-.row-btn {
+.row-btn,
+.protected-note {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   height: 32px;
   padding: 0 10px;
   border-radius: var(--rounded-full);
   font-size: var(--text-caption);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.row-btn {
   font-weight: 600;
   color: var(--color-ink-secondary);
   transition: color var(--duration-fast) ease, background var(--duration-fast) ease, transform var(--duration-fast) var(--ease-out);
 }
 
-.row-btn svg {
+.row-action-end {
+  width: calc(4em + 20px);
+  padding: 0;
+}
+
+.protected-note {
+  color: var(--color-ink-disabled);
+  user-select: none;
+}
+
+.protected-icon {
+  display: none;
+}
+
+.row-btn svg,
+.protected-icon {
+  flex-shrink: 0;
   width: 15px;
   height: 15px;
 }
@@ -727,7 +753,13 @@ tbody tr.is-new {
     padding: 0;
   }
 
-  .row-btn {
+  .row-actions {
+    min-width: 0;
+  }
+
+  .row-btn,
+  .protected-note {
+    position: relative;
     width: 36px;
     height: 36px;
     padding: 0;
@@ -735,8 +767,24 @@ tbody tr.is-new {
     background: var(--color-surface-base);
   }
 
+  .protected-icon {
+    display: block;
+  }
+
   .row-btn-label {
     display: none;
+  }
+
+  .protected-note-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 }
 </style>

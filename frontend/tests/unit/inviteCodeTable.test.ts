@@ -26,7 +26,8 @@ describe('invite code table', () => {
     expect(placeholderRow!.text()).toContain('旧名（占位）')
     expect(placeholderRow!.text()).toContain('不可删除')
     expect(placeholderRow!.find('.row-btn-danger').exists()).toBe(false)
-    expect(usedRow!.find('.row-btn-danger').exists()).toBe(true)
+    expect(placeholderRow!.get('.protected-note').classes()).toContain('row-action-end')
+    expect(usedRow!.get('.row-btn-danger').classes()).toContain('row-action-end')
     expect(wrapper.get('.summary').text()).toContain('1 个历史成绩占位用户')
   })
 
