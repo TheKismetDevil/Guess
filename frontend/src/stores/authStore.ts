@@ -1,10 +1,12 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, onScopeDispose } from 'vue'
 import { register as registerApi, login as loginApi } from '@/api/auth'
+import { subscribeAuthEvents } from '@/utils/authEvents'
 import { getTokenExpiry } from '@/utils/jwt'
 import type { LoginRequest, RegisterRequest, UserInfo } from '@/types/auth'
 
 const GUEST_PATHS = ['/login', '/register', '/reset-password']
+const MAX_TIMEOUT_MS = 2_147_483_647
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserInfo | null>(null)
@@ -15,6 +17,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() => user.value?.is_admin ?? false)
 
   let sessionExpiryTimer: ReturnType<typeof setTimeout> | null = null
+  let hasPersistedSession = false
 
   function setUser(u: UserInfo | null) {
     user.value = u
@@ -33,12 +36,26 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function redirectToLoginWithExpiredSession() {
+    if (typeof window === 'undefined') return
     const pathname = window.location.pathname
     if (GUEST_PATHS.includes(pathname)) {
       return
     }
     const currentPath = window.location.pathname + window.location.search
     window.location.href = `/login?session=expired&redirect=${encodeURIComponent(currentPath)}`
+  }
+
+  function clearMemoryState() {
+    hasPersistedSession = false
+    clearSessionExpiryTimer()
+    user.value = null
+    accessToken.value = null
+    refreshToken.value = null
+  }
+
+  function clearAuth() {
+    clearMemoryState()
+    localStorage.removeItem('auth')
   }
 
   function handleSessionExpired() {
@@ -51,7 +68,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   function scheduleSessionExpiry(token: string) {
     clearSessionExpiryTimer()
-    if (!user.value?.is_admin) {
+    if (!user.value) {
       return
     }
     const exp = getTokenExpiry(token)
@@ -64,23 +81,16 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     sessionExpiryTimer = setTimeout(() => {
-      handleSessionExpired()
-    }, delay)
+      scheduleSessionExpiry(token)
+    }, Math.min(delay, MAX_TIMEOUT_MS))
   }
 
   function persistAuth(data: { accessToken: string; refreshToken: string; user: UserInfo }) {
+    hasPersistedSession = true
     setUser(data.user)
     setTokens(data.accessToken, data.refreshToken)
     localStorage.setItem('auth', JSON.stringify(data))
     scheduleSessionExpiry(data.refreshToken)
-  }
-
-  function clearAuth() {
-    clearSessionExpiryTimer()
-    user.value = null
-    accessToken.value = null
-    refreshToken.value = null
-    localStorage.removeItem('auth')
   }
 
   async function register(data: RegisterRequest) {
@@ -105,20 +115,88 @@ export const useAuthStore = defineStore('auth', () => {
     clearAuth()
   }
 
-  // Restore session from localStorage on init
+  // Restore / sync session from localStorage
   function restoreSession() {
     const stored = localStorage.getItem('auth')
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored)
-        setUser(parsed.user)
-        setTokens(parsed.accessToken, parsed.refreshToken)
-        scheduleSessionExpiry(parsed.refreshToken)
-      } catch {
+    if (!stored) {
+      if (hasPersistedSession) {
+        const wasOnAdminRoute =
+          typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')
+        clearMemoryState()
+        if (wasOnAdminRoute) {
+          window.location.href = '/'
+        }
+      }
+      return
+    }
+
+    try {
+      const parsed = JSON.parse(stored)
+      if (!parsed?.user || !parsed?.refreshToken) {
         localStorage.removeItem('auth')
+        if (hasPersistedSession) {
+          clearMemoryState()
+        }
+        return
+      }
+      hasPersistedSession = true
+      setUser(parsed.user)
+      setTokens(parsed.accessToken ?? '', parsed.refreshToken)
+      scheduleSessionExpiry(parsed.refreshToken)
+    } catch {
+      localStorage.removeItem('auth')
+      if (hasPersistedSession) {
+        clearMemoryState()
       }
     }
   }
+
+  const unsubscribeAuthEvents = subscribeAuthEvents((event) => {
+    if (event.type === 'token-refreshed') {
+      accessToken.value = event.accessToken
+    } else if (event.type === 'auth-cleared') {
+      clearMemoryState()
+    }
+  })
+
+  function handleVisibilityChange() {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      restoreSession()
+    }
+  }
+
+  function handleWindowFocus() {
+    restoreSession()
+  }
+
+  function handleStorageEvent(event: StorageEvent) {
+    if (event.key === 'auth' || event.key === null) {
+      if (!event.newValue && user.value) {
+        hasPersistedSession = true
+      }
+      restoreSession()
+    }
+  }
+
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('storage', handleStorageEvent)
+  }
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+  }
+
+  onScopeDispose(() => {
+    clearSessionExpiryTimer()
+    unsubscribeAuthEvents()
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('focus', handleWindowFocus)
+      window.removeEventListener('storage', handleStorageEvent)
+    }
+    if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  })
 
   return {
     user,
@@ -136,4 +214,3 @@ export const useAuthStore = defineStore('auth', () => {
     restoreSession,
   }
 })
-
