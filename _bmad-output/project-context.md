@@ -227,7 +227,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **邀请码系统三大变更**：
   1. **生成时绑定 QQ**：管理员在后台输入 QQ 号后点击生成邀请码，`bound_qq` 在创建时即设值，`status` 为 `unused`。
   2. **注册时校验 QQ**：`register()` 校验 `invite_code.bound_qq == request.qq`，不匹配返回 `QQ_MISMATCH`。
-  3. **管理员删除级联**：`DELETE /api/v1/admin/invite-codes/{code}` 级联删除邀请码 + 绑定用户 + 用户投票（User FK CASCADE）。`unused` 码只删邀请码本身。
+  3. **管理员删除级联**：`DELETE /api/v1/admin/invite-codes/{code}` 级联删除邀请码 + 绑定用户 + 用户投票（User FK CASCADE）+ 该 QQ 的历史成绩。`unused` 码只删邀请码本身；占位用户的码不可删除（409 `PLACEHOLDER_PROTECTED`）。
 - **邀请码只有两种状态**：`unused`（未绑定）和 `used`（已绑定），不再有 `disabled` 状态。
 - **登录三种模式**（`LoginRequest` 所有字段可选，按优先级判断）：`invite_code`（无密码，查 `bound_username` 登录）/ `qq`（+密码查 `User.qq`）/ `username`（+密码查 `User.username`）。`unused` 码返回 `"该邀请码尚未绑定用户"`，不存在的码返回 `"用户名或密码错误"`。
 
@@ -351,6 +351,14 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - 注册：`auth_service.register()` 在邀请码校验后按 QQ 查找占位用户，若存在则**原地激活**（改用户名、密码、`invite_code`，保留 `id`），否则照常新建用户。用户名唯一性检查排除被激活的占位用户本身。
 - 撤销导入或导入替换后调用 `remove_orphan_placeholders()`：删除 QQ 已无任何历史成绩的占位用户，但保留其邀请码供重新导入/注册复用；撤销恢复旧快照时会先 `ensure_placeholders`。已激活用户永不自动删除。
 - 占位用户参与排行榜/Head to Head 时与普通用户一致（`kind='user'`）；排行榜和对比中按 QQ 合并的“未匹配历史身份”分支仍保留作兜底。
+- **占位用户受保护**：`GET /api/v1/admin/invite-codes` 通过 `users.invite_code` 关联返回 `placeholder_username`（搜索也匹配占位用户名）；管理页显示“占位·待注册”和“不可删除”，不渲染删除按钮。后端删除占位用户的邀请码返回 409 `PLACEHOLDER_PROTECTED`。
+
+**一个 QQ 一个账户：**
+- 迁移 `019` 为 `users.qq` 加唯一约束 `uq_users_qq`（模型 `__table_args__` 同名）。占位用户也占用该 QQ。
+- `create_invite_code`：QQ 已有正式账户返回 409 `QQ_ALREADY_REGISTERED`；QQ 已有 `unused` 邀请码（含占位用户的码）返回 409 `QQ_HAS_UNUSED_CODE`，消息中带原邀请码；仅有占位用户但没有码时，新码会挂到该占位用户上。前端 `InviteCodeTable` 直接显示后端 `detail.message`。
+- `register`：没有占位用户、但该 QQ 已有账户时返回 400 `QQ_ALREADY_REGISTERED`（兜底历史遗留的未绑定 QQ 邀请码）。
+- 删除已使用的邀请码会级联删除用户、投票（FK CASCADE）以及 `historical_scores` 中该 QQ 的全部历史成绩；空的历史比赛保留。若之后撤销涉及这些比赛的“更新”批次，会因快照不一致返回 `UNDO_CONFLICT`。
+- QQ 格式统一为 5–20 位 ASCII 数字（`app/utils/qq.py` 的 `is_valid_qq`，不用 `str.isdigit()`，避免全角数字）：注册、QQ 登录、生成邀请码和历史导入都校验；前端注册/登录/生成邀请码使用 `/^[0-9]{5,20}$/`。
 
 **QQ 头像（后端代理）：**
 - 浏览器永远拿不到原始 QQ：接口只返回 `avatar_key`（`avatar_service.avatar_key(qq)` = HMAC(`jwt_secret`, `avatar:{qq}`) 的 64 位 hex）。`LeaderboardEntry`、Head to Head 参与者、`VoteListEntry`、`UserInfo`（登录/注册/重置密码）均带 `avatar_key`。

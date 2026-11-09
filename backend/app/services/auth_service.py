@@ -257,8 +257,20 @@ async def register(
             },
         )
 
-    # Step 3: Check username uniqueness (a placeholder being activated may keep its own name)
+    # Step 3: One account per QQ; a placeholder created by historical import may be activated
     placeholder = await find_placeholder(db, request.qq)
+    if placeholder is None:
+        registered = (await db.execute(select(User.id).where(User.qq == request.qq))).first()
+        if registered is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "QQ_ALREADY_REGISTERED",
+                    "message": "该 QQ 已注册账户",
+                },
+            )
+
+    # Step 3.5: Check username uniqueness (a placeholder being activated may keep its own name)
     existing_user = (await db.execute(
         select(User).where(User.username == request.username)
     )).scalar_one_or_none()

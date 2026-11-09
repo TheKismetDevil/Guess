@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, field_validator
 
+from app.utils.qq import QQ_ERROR_MESSAGE, is_valid_qq
+
 
 class RegisterRequest(BaseModel):
     username: str
@@ -28,8 +30,8 @@ class RegisterRequest(BaseModel):
     @field_validator("qq")
     @classmethod
     def validate_qq(cls, v: str) -> str:
-        if len(v) < 5 or len(v) > 20:
-            raise ValueError("QQ 号长度需在 5-20 个字符之间")
+        if not is_valid_qq(v):
+            raise ValueError(QQ_ERROR_MESSAGE)
         return v
 
     @field_validator("invite_code")
@@ -77,8 +79,8 @@ class LoginRequest(BaseModel):
     @field_validator("qq")
     @classmethod
     def validate_qq(cls, v: str | None) -> str | None:
-        if v is not None and (len(v) < 5 or len(v) > 20):
-            raise ValueError("QQ 号长度需在 5-20 个字符之间")
+        if v is not None and not is_valid_qq(v):
+            raise ValueError(QQ_ERROR_MESSAGE)
         return v
 
 

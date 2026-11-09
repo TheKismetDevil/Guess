@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 from openpyxl import load_workbook
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from app.models.horse import Horse
 from app.models.race import Race, RaceHorse, RaceStatus
@@ -28,10 +29,21 @@ async def test_all_migrations_and_legacy_backfill_preserve_scores(pg_database):
         await conn.execute(text("INSERT INTO historical_scores(race_id,qq,display_name,points) VALUES (1,'12345','legacy user',0)"))
     await migrate()
     async with engine.connect() as conn:
-        assert (await conn.execute(text('SELECT version_num FROM alembic_version'))).scalar_one() == '018'
+        assert (await conn.execute(text('SELECT version_num FROM alembic_version'))).scalar_one() == '019'
         assert (await conn.execute(text('SELECT points FROM historical_scores'))).scalar_one() == 0
         assert (await conn.execute(text('SELECT count(*) FROM historical_races WHERE import_batch_id IS NOT NULL'))).scalar_one() == 1
         assert (await conn.execute(text('SELECT imported_races, imported_scores, updated_races FROM historical_import_batches'))).one() == (1, 1, 0)
+
+
+async def test_migration_enforces_one_account_per_qq(pg_database):
+    engine, _, migrate = pg_database
+    await migrate()
+    insert = text("INSERT INTO users(username,password_hash,qq,invite_code,is_admin) VALUES (:u,'x','55555',:u,false)")
+    async with engine.begin() as conn:
+        await conn.execute(insert, {'u': 'first'})
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(insert, {'u': 'second'})
 
 
 async def test_postgres_import_diff_update_and_undo(pg_database):

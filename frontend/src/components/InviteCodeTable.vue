@@ -26,11 +26,25 @@ const statusLabels: Record<InviteCodeStatus, string> = {
   used: '已绑定',
 }
 
-function statusLabel(status: InviteCodeStatus): string {
-  return statusLabels[status] || status
+const QQ_PATTERN = /^[0-9]{5,20}$/
+
+function statusLabel(item: InviteCode): string {
+  if (item.placeholder_username) return '占位·待注册'
+  return statusLabels[item.status] || item.status
+}
+
+function statusClass(item: InviteCode): string {
+  return item.placeholder_username ? 'status-placeholder' : `status-${item.status}`
+}
+
+/** Prefer the backend's error message (e.g. QQ already registered) over a generic one. */
+function apiMessage(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: { message?: unknown } } } })?.response?.data?.detail
+  return typeof detail?.message === 'string' ? detail.message : fallback
 }
 
 const unusedCount = computed(() => inviteCodes.value.filter(c => c.status === 'unused').length)
+const placeholderCount = computed(() => inviteCodes.value.filter(c => c.placeholder_username).length)
 
 function showNotice(message: string) {
   notice.value = message
@@ -68,8 +82,8 @@ async function handleCreate() {
     showNotice('请先输入 QQ 号')
     return
   }
-  if (value.length < 5 || value.length > 20) {
-    showNotice('QQ 号长度需在 5-20 个字符之间')
+  if (!QQ_PATTERN.test(value)) {
+    showNotice('QQ 号必须是 5-20 位数字')
     return
   }
   generating.value = true
@@ -78,14 +92,15 @@ async function handleCreate() {
     inviteCodes.value.unshift(code)
     lastCreated.value = code
     qq.value = ''
-  } catch {
-    showNotice('生成邀请码失败，请重试')
+  } catch (err) {
+    showNotice(apiMessage(err, '生成邀请码失败，请重试'))
   } finally {
     generating.value = false
   }
 }
 
 function handleDelete(item: InviteCode) {
+  if (item.placeholder_username) return
   deleteTarget.value = item
 }
 
@@ -93,7 +108,7 @@ const deleteMessage = computed(() => {
   const item = deleteTarget.value
   if (!item) return ''
   return item.status === 'used'
-    ? `确定删除邀请码「{name}」？这会同时删除用户「${item.bound_username}」及其所有投票记录，不可撤销！`
+    ? `确定删除邀请码「{name}」？这会同时删除用户「${item.bound_username}」及其所有投票记录和历史成绩，不可撤销！`
     : '确定删除邀请码「{name}」？此操作不可撤销。'
 })
 
@@ -106,9 +121,9 @@ async function confirmDelete() {
     inviteCodes.value = inviteCodes.value.filter((c) => c.code !== item.code)
     if (lastCreated.value?.code === item.code) lastCreated.value = null
     deleteTarget.value = null
-  } catch {
+  } catch (err) {
     deleteTarget.value = null
-    showNotice('删除失败，请重试')
+    showNotice(apiMessage(err, '删除失败，请重试'))
   } finally {
     deleting.value = false
   }
@@ -213,7 +228,7 @@ onUnmounted(() => {
 
     <template v-else>
       <p class="summary">
-        共 {{ inviteCodes.length }} 个，其中 <strong>{{ unusedCount }}</strong> 个尚未使用
+        共 {{ inviteCodes.length }} 个，其中 <strong>{{ unusedCount }}</strong> 个尚未使用<template v-if="placeholderCount">（含 {{ placeholderCount }} 个历史成绩占位用户）</template>
       </p>
       <div class="table-wrapper" :class="{ 'is-searching': searching }">
         <table class="code-table">
@@ -234,9 +249,12 @@ onUnmounted(() => {
             >
               <td class="cell-code"><code class="code-text">{{ item.code }}</code></td>
               <td data-label="状态">
-                <span class="status-chip" :class="`status-${item.status}`">{{ statusLabel(item.status) }}</span>
+                <span class="status-chip" :class="statusClass(item)">{{ statusLabel(item) }}</span>
               </td>
-              <td data-label="绑定用户" :class="{ muted: !item.bound_username }">{{ item.bound_username || '-' }}</td>
+              <td v-if="item.placeholder_username" data-label="绑定用户">
+                {{ item.placeholder_username }}<span class="placeholder-note">（占位）</span>
+              </td>
+              <td v-else data-label="绑定用户" :class="{ muted: !item.bound_username }">{{ item.bound_username || '-' }}</td>
               <td data-label="QQ" :class="{ muted: !item.bound_qq }">{{ item.bound_qq || '-' }}</td>
               <td class="col-actions">
                 <div class="row-actions">
@@ -254,7 +272,13 @@ onUnmounted(() => {
                     </svg>
                     <span class="row-btn-label">{{ copiedCode === item.code ? '已复制' : '复制' }}</span>
                   </button>
+                  <span
+                    v-if="item.placeholder_username"
+                    class="protected-note"
+                    title="占位用户由历史成绩导入创建，不能删除；对方用该 QQ 和邀请码注册后即成为正式用户"
+                  >不可删除</span>
                   <button
+                    v-else
                     class="row-btn row-btn-danger"
                     :aria-label="`删除邀请码 ${item.code}`"
                     @click="handleDelete(item)"
@@ -536,6 +560,23 @@ tbody tr.is-new {
 .status-used {
   color: var(--color-ink-secondary);
   background: var(--color-surface-sunken);
+}
+
+.status-placeholder {
+  color: var(--color-accent-dark);
+  background: var(--color-accent-tint);
+}
+
+.placeholder-note {
+  margin-left: 2px;
+  font-size: 12px;
+  color: var(--color-ink-secondary);
+}
+
+.protected-note {
+  font-size: 12px;
+  color: var(--color-ink-disabled);
+  white-space: nowrap;
 }
 
 .muted {

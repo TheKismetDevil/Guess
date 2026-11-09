@@ -105,7 +105,7 @@ class TestRegisterErrors:
         self, db_session: AsyncSession, async_client: AsyncClient
     ):
         """AC #4: Duplicate username returns error."""
-        await create_user(db_session, username="existing_user")
+        await create_user(db_session, username="existing_user", qq="22222222222")
         await create_unused_invite_code(db_session)
 
         response = await async_client.post(

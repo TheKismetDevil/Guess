@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy import Boolean, DateTime, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
@@ -10,6 +10,8 @@ from app.models import Base
 
 class User(Base):
     __tablename__ = "users"
+    # One QQ maps to exactly one account (placeholder or registered).
+    __table_args__ = (UniqueConstraint("qq", name="uq_users_qq"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(
