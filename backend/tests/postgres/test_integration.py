@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date
 from io import BytesIO
 
@@ -8,12 +9,15 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.models.horse import Horse
+from app.models.invite_code import InviteCode
 from app.models.race import Race, RaceHorse, RaceStatus
 from app.models.user import User
 from app.models.vote import Vote
 from app.schemas.result import ResultEntry, ResultPosition
-from app.services import historical_management_service, leaderboard_service, result_service, vote_service
+from app.schemas.auth import RegisterRequest
+from app.services import auth_service, historical_management_service, invite_code_service, leaderboard_service, result_service, vote_service
 from app.services.historical_import_service import import_workbook, preview_workbook
+from app.services.placeholder_user_service import ensure_placeholders, remove_orphan_placeholders
 from tests.test_historical_import import workbook
 
 pytestmark = pytest.mark.postgres
@@ -29,21 +33,90 @@ async def test_all_migrations_and_legacy_backfill_preserve_scores(pg_database):
         await conn.execute(text("INSERT INTO historical_scores(race_id,qq,display_name,points) VALUES (1,'12345','legacy user',0)"))
     await migrate()
     async with engine.connect() as conn:
-        assert (await conn.execute(text('SELECT version_num FROM alembic_version'))).scalar_one() == '019'
+        assert (await conn.execute(text('SELECT version_num FROM alembic_version'))).scalar_one() == '020'
         assert (await conn.execute(text('SELECT points FROM historical_scores'))).scalar_one() == 0
         assert (await conn.execute(text('SELECT count(*) FROM historical_races WHERE import_batch_id IS NOT NULL'))).scalar_one() == 1
         assert (await conn.execute(text('SELECT imported_races, imported_scores, updated_races FROM historical_import_batches'))).one() == (1, 1, 0)
 
 
-async def test_migration_enforces_one_account_per_qq(pg_database):
+async def test_qq_migration_preserves_legacy_accounts_and_blocks_new_duplicates(pg_database):
     engine, _, migrate = pg_database
-    await migrate()
+    await migrate('018')
     insert = text("INSERT INTO users(username,password_hash,qq,invite_code,is_admin) VALUES (:u,'x','55555',:u,false)")
     async with engine.begin() as conn:
         await conn.execute(insert, {'u': 'first'})
+        await conn.execute(insert, {'u': 'second'})
+        await conn.execute(text("""INSERT INTO invite_codes(code, bound_qq) VALUES
+            ('FIRST', '66666'), ('SECOND', '66666'), ('UNBOUND1', NULL), ('UNBOUND2', NULL)"""))
+    await migrate()
+    async with engine.connect() as conn:
+        assert (await conn.execute(text('SELECT id, username, qq FROM users ORDER BY id'))).all() == [
+            (1, 'first', '55555'), (2, 'second', '55555'),
+        ]
+        assert (await conn.execute(text('SELECT code, status FROM invite_codes ORDER BY id'))).all() == [
+            ('FIRST', 'unused'), ('SECOND', 'disabled'), ('UNBOUND1', 'unused'), ('UNBOUND2', 'unused'),
+        ]
     with pytest.raises(IntegrityError):
         async with engine.begin() as conn:
-            await conn.execute(insert, {'u': 'second'})
+            await conn.execute(insert, {'u': 'third'})
+
+
+async def test_concurrent_invite_creation_returns_one_conflict(pg_database, monkeypatch):
+    _, sessions, migrate = pg_database
+    await migrate()
+    both_checked = asyncio.Barrier(2)
+    reject_pending = invite_code_service._reject_pending_code
+
+    async def check_pending_then_wait(db, qq):
+        await reject_pending(db, qq)
+        await both_checked.wait()
+
+    monkeypatch.setattr(invite_code_service, '_reject_pending_code', check_pending_then_wait)
+
+    async def create():
+        async with sessions() as db:
+            try:
+                created = await invite_code_service.create_invite_code(db, '55555')
+                await db.commit()
+                return created.code
+            except HTTPException as error:
+                assert error.status_code == 409
+                assert error.detail['code'] == 'QQ_HAS_UNUSED_CODE'
+                return None
+
+    results = await asyncio.wait_for(asyncio.gather(create(), create()), timeout=10)
+    async with sessions() as db:
+        codes = (await db.scalars(select(InviteCode.code))).all()
+    assert len(codes) == 1
+    assert codes[0] in results and results.count(None) == 1
+
+
+async def test_orphan_cleanup_cannot_delete_concurrently_activated_user(pg_database):
+    _, sessions, migrate = pg_database
+    await migrate()
+    async with sessions() as db:
+        await ensure_placeholders(db, {'55555': 'original'})
+        placeholder = await db.scalar(select(User))
+        await db.commit()
+
+    async def cleanup():
+        async with sessions() as db:
+            removed = await remove_orphan_placeholders(db)
+            await db.commit()
+            return removed
+
+    async with sessions() as db:
+        registered = await auth_service.register(db, RegisterRequest(
+            username='registered', password='secret123', qq=placeholder.qq, invite_code=placeholder.invite_code,
+        ))
+        task = asyncio.create_task(cleanup())
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.2)
+        await db.commit()
+    assert await asyncio.wait_for(task, timeout=10) == 0
+    async with sessions() as db:
+        assert (await db.get(User, registered.user.id)).username == 'registered'
+        assert await db.scalar(select(InviteCode.status)) == 'used'
 
 
 async def test_postgres_import_diff_update_and_undo(pg_database):

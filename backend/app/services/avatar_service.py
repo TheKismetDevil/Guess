@@ -6,23 +6,26 @@ connection pool, deduplicates concurrent fetches for the same QQ, and caches
 the image so raw QQ numbers are never exposed in public pages or image URLs.
 """
 import asyncio
+import base64
+import hashlib
 import hmac
 import re
 import time
 
 import httpx
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESSIV
 from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.security import opaque_key
 from app.models.historical_score import HistoricalScore
 from app.models.user import User
 
-AVATAR_KIND = 'avatar'
+_KEY_CONTEXT = b'guess:qq-avatar:v1'
 MAX_AVATAR_BYTES = 512 * 1024
 MAX_CACHE_ENTRIES = 2000
-_KEY_PATTERN = re.compile(r'^[0-9a-f]{64}$')
+_KEY_PATTERN = re.compile(r'v1_[A-Za-z0-9_-]{23,48}')
 
 # qq -> (expires_at, content, media_type); content None caches a non-transient failure.
 _cache: dict[str, tuple[float, bytes | None, str | None]] = {}
@@ -31,11 +34,17 @@ _client: httpx.AsyncClient | None = None
 _client_loop: asyncio.AbstractEventLoop | None = None
 
 
+def _avatar_cipher() -> AESSIV:
+    key = hmac.digest(settings.jwt_secret.encode(), _KEY_CONTEXT, hashlib.sha256)
+    return AESSIV(key)
+
+
 def avatar_key(qq: str | None) -> str | None:
-    """Public, non-reversible key for a QQ avatar (None when there is no QQ)."""
-    if not qq:
+    """Stable encrypted key. Older numeric QQs can be shorter than five digits."""
+    if not qq or not re.fullmatch(r'[0-9]{1,20}', qq):
         return None
-    return opaque_key(AVATAR_KIND, qq).split(':', 1)[1]
+    ciphertext = _avatar_cipher().encrypt(qq.encode('ascii'), [_KEY_CONTEXT])
+    return 'v1_' + base64.urlsafe_b64encode(ciphertext).decode('ascii').rstrip('=')
 
 
 def clear_cache() -> None:
@@ -65,13 +74,17 @@ async def close_client() -> None:
 
 
 async def resolve_qq(db, key: str) -> str | None:
-    if not _KEY_PATTERN.match(key):
+    if not _KEY_PATTERN.fullmatch(key):
         return None
-    qqs = (await db.execute(select(User.qq).union(select(HistoricalScore.qq)))).scalars().all()
-    for qq in qqs:
-        if hmac.compare_digest(avatar_key(qq), key):
-            return qq
-    return None
+    encoded = key.removeprefix('v1_')
+    try:
+        ciphertext = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4))
+        qq = _avatar_cipher().decrypt(ciphertext, [_KEY_CONTEXT]).decode('ascii')
+    except (ValueError, InvalidTag):
+        return None
+    user_exists = select(User.id).where(User.qq == qq).exists()
+    score_exists = select(HistoricalScore.id).where(HistoricalScore.qq == qq).exists()
+    return qq if await db.scalar(select(user_exists | score_exists)) else None
 
 
 async def download(url: str) -> httpx.Response:
@@ -121,8 +134,7 @@ async def fetch_avatar(qq: str) -> tuple[bytes, str] | None:
     return await asyncio.shield(task)
 
 
-async def get_avatar(db, key: str) -> tuple[bytes, str]:
-    qq = await resolve_qq(db, key)
+async def get_avatar(qq: str | None) -> tuple[bytes, str]:
     image = await fetch_avatar(qq) if qq else None
     if image is None:
         raise HTTPException(status_code=404, detail={'code': 'AVATAR_NOT_FOUND', 'message': '头像不存在或暂时无法获取'})

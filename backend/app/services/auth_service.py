@@ -16,7 +16,7 @@ from app.core.security import (
 from app.models.invite_code import InviteCode
 from app.models.user import User
 from app.services.avatar_service import avatar_key
-from app.services.placeholder_user_service import find_placeholder
+from app.services.placeholder_user_service import is_placeholder
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -89,9 +89,10 @@ async def login(db: AsyncSession, request: LoginRequest) -> LoginResponse:
                 },
             )
         result = await db.execute(
-            select(User).where(User.qq == request.qq)
+            select(User).where(User.qq == request.qq).limit(2)
         )
-        user = result.scalar_one_or_none()
+        matches = result.scalars().all()
+        user = matches[0] if len(matches) == 1 else None
         if user and not verify_password(request.password, user.password_hash):
             user = None
 
@@ -215,7 +216,7 @@ async def register(
     """
     # Step 1: Look up invite code
     result = await db.execute(
-        select(InviteCode).where(InviteCode.code == request.invite_code)
+        select(InviteCode).where(InviteCode.code == request.invite_code).with_for_update()
     )
     invite_code = result.scalar_one_or_none()
 
@@ -238,7 +239,7 @@ async def register(
             },
         )
 
-    if invite_code.status == "disabled":
+    if invite_code.status != "unused":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -257,18 +258,24 @@ async def register(
             },
         )
 
-    # Step 3: One account per QQ; a placeholder created by historical import may be activated
-    placeholder = await find_placeholder(db, request.qq)
-    if placeholder is None:
-        registered = (await db.execute(select(User.id).where(User.qq == request.qq))).first()
-        if registered is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "code": "QQ_ALREADY_REGISTERED",
-                    "message": "该 QQ 已注册账户",
-                },
-            )
+    # Lock the row before deciding whether to activate it so orphan cleanup
+    # either finishes first or rechecks the password after activation commits.
+    matches = (await db.scalars(
+        select(User).where(User.qq == request.qq).limit(2).with_for_update()
+    )).all()
+    placeholder = matches[0] if len(matches) == 1 and is_placeholder(matches[0]) else None
+    if matches and placeholder is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "QQ_ALREADY_REGISTERED", "message": "该 QQ 已注册账户"},
+        )
+    if placeholder is not None and (
+        invite_code.bound_qq != request.qq or invite_code.code != placeholder.invite_code
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVITE_CODE_INVALID", "message": "请使用该 QQ 对应的专用邀请码"},
+        )
 
     # Step 3.5: Check username uniqueness (a placeholder being activated may keep its own name)
     existing_user = (await db.execute(
@@ -291,7 +298,6 @@ async def register(
         user = placeholder
         user.username = request.username
         user.password_hash = password_hash
-        user.invite_code = request.invite_code
     else:
         user = User(
             username=request.username,

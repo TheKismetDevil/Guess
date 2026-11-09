@@ -96,6 +96,25 @@ async def test_register_refuses_second_account_for_same_qq(async_client, db_sess
 
 
 @pytest.mark.asyncio
+async def test_legacy_unbound_code_cannot_activate_placeholder(async_client, db_session):
+    await import_workbook(db_session, workbook())
+    placeholder = await placeholder_for(db_session)
+    legacy = InviteCode(code='LEGACY01', status='unused')
+    db_session.add(legacy)
+    await db_session.flush()
+
+    registration = {'username': '新名字', 'password': 'secret123', 'qq': '12345'}
+    denied = await async_client.post('/api/v1/auth/register', json={**registration, 'invite_code': legacy.code})
+    assert denied.status_code == 400
+    assert denied.json()['detail']['code'] == 'INVITE_CODE_INVALID'
+    assert legacy.status == 'unused'
+
+    accepted = await async_client.post('/api/v1/auth/register', json={**registration, 'invite_code': placeholder.invite_code})
+    assert accepted.status_code == 201
+    assert accepted.json()['data']['user']['id'] == placeholder.id
+
+
+@pytest.mark.asyncio
 async def test_placeholder_is_listed_searchable_and_cannot_be_deleted(admin_client, db_session):
     await import_workbook(db_session, workbook())
     placeholder = await placeholder_for(db_session)

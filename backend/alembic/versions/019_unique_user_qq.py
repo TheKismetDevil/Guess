@@ -1,4 +1,4 @@
-"""Enforce one account per QQ number."""
+"""Reserve the original QQ uniqueness revision; enforcement now lives in 020."""
 from alembic import op
 
 revision = '019'
@@ -8,8 +8,8 @@ depends_on = None
 
 
 def upgrade():
-    op.create_unique_constraint('uq_users_qq', 'users', ['qq'])
+    pass
 
 
 def downgrade():
-    op.drop_constraint('uq_users_qq', 'users', type_='unique')
+    op.execute('ALTER TABLE users DROP CONSTRAINT IF EXISTS uq_users_qq')

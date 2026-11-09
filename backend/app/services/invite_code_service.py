@@ -2,6 +2,7 @@
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, delete, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.historical_score import HistoricalScore
@@ -19,6 +20,17 @@ def _placeholder_join():
 
 def _response(code: InviteCode, placeholder_username: str | None) -> InviteCodeResponse:
     return InviteCodeResponse.model_validate(code).model_copy(update={"placeholder_username": placeholder_username})
+
+
+async def _reject_pending_code(db: AsyncSession, qq: str) -> None:
+    pending = await db.scalar(select(InviteCode.code).where(
+        InviteCode.bound_qq == qq, InviteCode.status == "unused",
+    ))
+    if pending is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "QQ_HAS_UNUSED_CODE", "message": f"该 QQ 已有未使用的邀请码 {pending}"},
+        )
 
 
 async def get_invite_codes(
@@ -54,34 +66,35 @@ async def create_invite_code(db: AsyncSession, qq: str) -> InviteCodeResponse:
     placeholder user without a code, the new code is attached to that placeholder.
     Retries up to MAX_RETRIES times if the generated code already exists.
     """
-    user = (await db.execute(select(User).where(User.qq == qq))).scalar_one_or_none()
-    if user is not None and not is_placeholder(user):
+    matches = (await db.scalars(
+        select(User).where(User.qq == qq).order_by(User.id).limit(2).with_for_update()
+    )).all()
+    user = matches[0] if matches else None
+    if user is not None and (len(matches) > 1 or not is_placeholder(user)):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "QQ_ALREADY_REGISTERED", "message": f"该 QQ 已注册用户「{user.username}」"},
         )
-    pending = (await db.execute(
-        select(InviteCode).where(InviteCode.bound_qq == qq, InviteCode.status == "unused")
-    )).scalars().first()
-    if pending is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "QQ_HAS_UNUSED_CODE", "message": f"该 QQ 已有未使用的邀请码 {pending.code}"},
-        )
+    await _reject_pending_code(db, qq)
 
     for _ in range(MAX_RETRIES):
         code_str = generate_invite_code()
-        existing = await db.execute(
-            select(InviteCode).where(InviteCode.code == code_str)
-        )
-        if existing.scalar_one_or_none() is None:
-            invite_code = InviteCode(code=code_str, bound_qq=qq)
-            db.add(invite_code)
-            if user is not None:
-                user.invite_code = code_str
-            await db.flush()
-            await db.refresh(invite_code)
-            return _response(invite_code, user.username if user is not None else None)
+        invite_code = InviteCode(code=code_str, bound_qq=qq)
+        try:
+            async with db.begin_nested():
+                db.add(invite_code)
+                await db.flush()
+        except IntegrityError:
+            await _reject_pending_code(db, qq)
+            if await db.scalar(select(InviteCode.id).where(InviteCode.code == code_str)) is None:
+                raise
+            continue
+
+        if user is not None:
+            user.invite_code = code_str
+        await db.flush()
+        await db.refresh(invite_code)
+        return _response(invite_code, user.username if user is not None else None)
 
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -96,8 +109,8 @@ async def delete_invite_code_cascade(db: AsyncSession, code: str) -> None:
     """Delete an invite code and cascade delete its bound user, votes and historical scores.
 
     - Unused code: just deletes the invite code record.
-    - Used code: also deletes the bound user (cascade deletes votes) and the
-      historical scores recorded under the user's QQ.
+    - Used code: also deletes the bound user and their votes. Historical scores
+      are removed only if no other legacy account shares the QQ.
     - Codes of placeholder users are protected and cannot be deleted.
     """
     result = await db.execute(
@@ -127,7 +140,8 @@ async def delete_invite_code_cascade(db: AsyncSession, code: str) -> None:
         )
         user = user_result.scalar_one_or_none()
         if user:
-            await db.execute(delete(HistoricalScore).where(HistoricalScore.qq == user.qq))
+            shared_qq = select(User.id).where(User.qq == user.qq, User.id != user.id).exists()
+            await db.execute(delete(HistoricalScore).where(HistoricalScore.qq == user.qq, ~shared_qq))
             await db.delete(user)
 
     # Delete the invite code

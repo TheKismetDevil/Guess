@@ -228,7 +228,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
   1. **生成时绑定 QQ**：管理员在后台输入 QQ 号后点击生成邀请码，`bound_qq` 在创建时即设值，`status` 为 `unused`。
   2. **注册时校验 QQ**：`register()` 校验 `invite_code.bound_qq == request.qq`，不匹配返回 `QQ_MISMATCH`。
   3. **管理员删除级联**：`DELETE /api/v1/admin/invite-codes/{code}` 级联删除邀请码 + 绑定用户 + 用户投票（User FK CASCADE）+ 该 QQ 的历史成绩。`unused` 码只删邀请码本身；占位用户的码不可删除（409 `PLACEHOLDER_PROTECTED`）。
-- **邀请码只有两种状态**：`unused`（未绑定）和 `used`（已绑定），不再有 `disabled` 状态。
+- **邀请码状态**：`unused`（尚未使用）、`used`（已绑定账户）、`disabled`（已停用）。迁移会停用同一 QQ 的多余待用码，后台仍可查看和删除这些码。
 - **登录三种模式**（`LoginRequest` 所有字段可选，按优先级判断）：`invite_code`（无密码，查 `bound_username` 登录）/ `qq`（+密码查 `User.qq`）/ `username`（+密码查 `User.username`）。`unused` 码返回 `"该邀请码尚未绑定用户"`，不存在的码返回 `"用户名或密码错误"`。
 
 **Voting System 模式（Story 3.2）：**
@@ -348,21 +348,21 @@ _This file contains critical rules and patterns that AI agents must follow when 
 **历史 QQ 占位用户：**
 - 历史成绩导入（`import_workbook`）完成后调用 `placeholder_user_service.ensure_placeholders()`：为写入成绩中**尚无任何账户**的 QQ 创建占位 `User`（`username` 取表格用户名，冲突时追加 `#2`、`#3`…；`password_hash` 以 `!placeholder:` 开头，永远无法登录）及一个 `unused`、`bound_qq` 为该 QQ 的邀请码；若该 QQ 已有 `unused` 邀请码则复用。导入结果返回 `placeholder_users` 数量。
 - 无需新增列/迁移：占位身份完全由 `password_hash` 前缀判断（`is_placeholder()`）。`security.verify_password()` 对 `!` 开头的哈希直接返回 False（passlib 遇到未知哈希会抛异常）。
-- 注册：`auth_service.register()` 在邀请码校验后按 QQ 查找占位用户，若存在则**原地激活**（改用户名、密码、`invite_code`，保留 `id`），否则照常新建用户。用户名唯一性检查排除被激活的占位用户本身。
-- 撤销导入或导入替换后调用 `remove_orphan_placeholders()`：删除 QQ 已无任何历史成绩的占位用户，但保留其邀请码供重新导入/注册复用；撤销恢复旧快照时会先 `ensure_placeholders`。已激活用户永不自动删除。
+- 注册：`auth_service.register()` 锁定邀请码和 QQ 对应的用户行。占位用户只接受自身关联且绑定该 QQ 的待用码，原地更新用户名和密码，保留 `id`。旧的未绑定码仍可用于没有账户的 QQ。用户名唯一性检查排除被激活的占位用户本身。
+- 撤销导入或导入替换后调用 `remove_orphan_placeholders()`：同一条 `DELETE` 同时校验占位状态和 QQ 是否已无历史成绩，保留邀请码供重新导入/注册复用；撤销恢复旧快照时会先 `ensure_placeholders`。
 - 占位用户参与排行榜/Head to Head 时与普通用户一致（`kind='user'`）；排行榜和对比中按 QQ 合并的“未匹配历史身份”分支仍保留作兜底。
 - **占位用户受保护**：`GET /api/v1/admin/invite-codes` 通过 `users.invite_code` 关联返回 `placeholder_username`（搜索也匹配占位用户名）；管理页显示“占位·待注册”和“不可删除”，不渲染删除按钮。后端删除占位用户的邀请码返回 409 `PLACEHOLDER_PROTECTED`。
 
 **一个 QQ 一个账户：**
-- 迁移 `019` 为 `users.qq` 加唯一约束 `uq_users_qq`（模型 `__table_args__` 同名）。占位用户也占用该 QQ。
-- `create_invite_code`：QQ 已有正式账户返回 409 `QQ_ALREADY_REGISTERED`；QQ 已有 `unused` 邀请码（含占位用户的码）返回 409 `QQ_HAS_UNUSED_CODE`，消息中带原邀请码；仅有占位用户但没有码时，新码会挂到该占位用户上。前端 `InviteCodeTable` 直接显示后端 `detail.message`。
+- 迁移 `020` 用部分唯一索引 `uq_users_qq` 限制新账户，保留旧库重复 QQ 的全部账户和关联记录，同组中 ID 最小的账户留在唯一索引内。应用对所有已有账户检查 QQ 冲突。共享 QQ 的旧账户可用用户名或已绑定的邀请码登录，历史成绩仍按独立历史身份展示。
+- 部分唯一索引 `uq_invite_codes_unused_qq` 限制每个已绑定 QQ 的待用码数量。迁移优先保留占位账户关联的待用码，否则保留最早的待用码。`create_invite_code` 在并发创建冲突时返回 409 `QQ_HAS_UNUSED_CODE` 并提示保留的码。QQ 已有正式账户返回 409 `QQ_ALREADY_REGISTERED`；仅有占位用户且没有待用码时，新码会挂到该占位用户上。前端 `InviteCodeTable` 直接显示后端 `detail.message`。
 - `register`：没有占位用户、但该 QQ 已有账户时返回 400 `QQ_ALREADY_REGISTERED`（兜底历史遗留的未绑定 QQ 邀请码）。
-- 删除已使用的邀请码会级联删除用户、投票（FK CASCADE）以及 `historical_scores` 中该 QQ 的全部历史成绩；空的历史比赛保留。若之后撤销涉及这些比赛的“更新”批次，会因快照不一致返回 `UNDO_CONFLICT`。
+- 删除已使用的邀请码会级联删除用户和投票（FK CASCADE）。QQ 没有其他账户时同时删除该 QQ 的历史成绩；空的历史比赛保留。若之后撤销涉及这些比赛的“更新”批次，会因快照不一致返回 `UNDO_CONFLICT`。
 - QQ 格式统一为 5–20 位 ASCII 数字（`app/utils/qq.py` 的 `is_valid_qq`，不用 `str.isdigit()`，避免全角数字）：注册、QQ 登录、生成邀请码和历史导入都校验；前端注册/登录/生成邀请码使用 `/^[0-9]{5,20}$/`。
 
 **QQ 头像（后端代理）：**
-- 浏览器永远拿不到原始 QQ：接口只返回 `avatar_key`（`avatar_service.avatar_key(qq)` = HMAC(`jwt_secret`, `avatar:{qq}`) 的 64 位 hex）。`LeaderboardEntry`、Head to Head 参与者、`VoteListEntry`、`UserInfo`（登录/注册/重置密码）均带 `avatar_key`。
-- `GET /api/v1/avatars/{avatar_key}`（公开）：在 `users.qq ∪ historical_scores.qq` 中反查 QQ，服务端通过复用的模块级 `httpx.AsyncClient` 连接池（`main.py` lifespan 退出时 `close_client()` 关闭）从 `settings.qq_avatar_url`（默认 `https://q1.qlogo.cn/g?b=qq&nk={qq}&s=100`）下载，并对同一 QQ 的在途请求做合并去重（`_inflight`）；仅接受 `image/*` 且 ≤512KB。进程内缓存成功结果 3 天（`avatar_cache_seconds=259200`）、非图片/4xx 失败结果 1 分钟（`avatar_failure_cache_seconds=60`）；网络超时/连接异常/上游 5xx 等临时错误**不写失败缓存**以便立即恢复；响应带 `Cache-Control: public, max-age=259200`（跟随 `avatar_cache_seconds`）。未知 key/下载失败返回 404 `AVATAR_NOT_FOUND`。
+- `avatar_key` 使用带 `v1_` 前缀的 URL 安全 AES-SIV 密文。服务端从 `jwt_secret` 派生独立密钥，公开号码标识保持稳定且不暴露原始 QQ。`LeaderboardEntry`、Head to Head 参与者、`VoteListEntry`、`UserInfo`（登录/注册/重置密码）均带 `avatar_key`。
+- `GET /api/v1/avatars/{avatar_key}`（公开）：先验证密文，再通过 `users.qq` 和 `historical_scores.qq` 的索引检查 QQ 是否存在；请求上游之前关闭查询会话。服务端复用模块级 `httpx.AsyncClient` 下载头像，并合并同一 QQ 的在途请求。仅接受 `image/*` 且 ≤512KB。成功缓存 3 天，非图片/4xx 缓存 1 分钟，超时/连接异常/5xx 可立即重试。响应 `Cache-Control` 跟随 `avatar_cache_seconds`；未知 key 或下载失败返回 404 `AVATAR_NOT_FOUND`。已保存旧版头像 key 的会话重新登录后会得到新版 key。
 - 测试中通过 monkeypatch `avatar_service.download` 模拟上游，并在每例前后 `clear_cache()`；**不得**在测试中访问真实网络。
 - 前端统一用 `components/UserAvatar.vue`（props：`avatarKey`、`name`、`size`）：有 key 时加载 `/api/v1/avatars/{key}`，无 key 或图片 `error` 时回退为首字母；key 变化会重试。父组件用 class 覆盖颜色/尺寸时选择器需比 `.user-avatar` 更具体（如 `.user-chip .avatar`、`.name-cell .row-avatar`）。已用于顶栏当前用户、排行榜行、Head to Head 选择列表/已选标签/表头、投票分布投票人名单。旧 localStorage 会话没有 `avatar_key`，重新登录后才显示头像。
 

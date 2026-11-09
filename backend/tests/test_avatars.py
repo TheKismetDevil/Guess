@@ -4,7 +4,9 @@ from datetime import date
 
 import httpx
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.api.v1.endpoints import avatars
 from app.core.config import settings
 from app.models.historical_score import HistoricalRace, HistoricalScore
 from app.models.user import User
@@ -15,10 +17,18 @@ PNG = b'\x89PNG\r\n\x1a\nfake'
 
 
 @pytest.fixture(autouse=True)
-def fake_download(monkeypatch):
+def fake_download(monkeypatch, db_session):
     calls = []
+    sessions = []
+    session_factory = async_sessionmaker(db_session.bind)
+
+    def open_session():
+        session = session_factory()
+        sessions.append(session)
+        return session
 
     async def download(url):
+        assert not any(session.in_transaction() for session in sessions)
         calls.append(url)
         await asyncio.sleep(0)
         if 'nk=55555' in url:
@@ -30,6 +40,7 @@ def fake_download(monkeypatch):
         return httpx.Response(200, content=PNG, headers={'content-type': 'image/png'})
 
     avatar_service.clear_cache()
+    monkeypatch.setattr(avatars, 'async_session_factory', open_session)
     monkeypatch.setattr(avatar_service, 'download', download)
     yield calls
     avatar_service.clear_cache()
@@ -38,7 +49,7 @@ def fake_download(monkeypatch):
 def test_avatar_key_is_stable_opaque_and_hides_qq():
     key = avatar_key('12345')
     assert key == avatar_key('12345') != avatar_key('12346')
-    assert len(key) == 64 and '12345' not in key
+    assert key.startswith('v1_') and key != '12345'
     assert avatar_key(None) is None and avatar_key('') is None
     assert settings.avatar_failure_cache_seconds == 60
     assert settings.avatar_cache_seconds == 3 * 24 * 60 * 60
@@ -52,7 +63,7 @@ async def test_avatar_endpoint_serves_and_caches_user_and_history_avatars(async_
     db_session.add(race)
     await db_session.flush()
     db_session.add(HistoricalScore(race_id=race.id, qq='77777', display_name='h', points=1))
-    await db_session.flush()
+    await db_session.commit()
     for qq in ('12345', '77777', '12345'):
         response = await async_client.get(f'/api/v1/avatars/{avatar_key(qq)}')
         assert response.status_code == 200
@@ -69,8 +80,10 @@ async def test_non_image_cached_briefly_but_transient_errors_not_cached(async_cl
         User(username='badgw', qq='50200', password_hash='x', invite_code='B'),
         User(username='html', qq='66666', password_hash='x', invite_code='C'),
     ])
-    await db_session.flush()
-    for key in (avatar_key('99999'), 'not-a-key', avatar_key('66666'), avatar_key('66666')):
+    await db_session.commit()
+    key = avatar_key('66666')
+    tampered_key = key[:3] + ('A' if key[3] != 'A' else 'B') + key[4:]
+    for key in (avatar_key('99999'), 'not-a-key', tampered_key, avatar_key('66666'), avatar_key('66666')):
         response = await async_client.get(f'/api/v1/avatars/{key}')
         assert response.status_code == 404
         assert response.json()['detail']['code'] == 'AVATAR_NOT_FOUND'

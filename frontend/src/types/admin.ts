@@ -1,6 +1,6 @@
 /** Invite code types. */
 
-export type InviteCodeStatus = 'unused' | 'used'
+export type InviteCodeStatus = 'unused' | 'used' | 'disabled'
 
 export interface InviteCode {
   code: string
