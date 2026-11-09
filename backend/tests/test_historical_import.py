@@ -41,6 +41,10 @@ async def test_import_filters_and_dedup(db_session):
     entries = await get_leaderboard(db_session, horse_count_max=0)
     assert (entries[0].total_points, entries[0].races_participated) == (0, 1)
     assert len((await import_workbook(db_session, workbook()))['skipped_races']) == 2
+    grades = {r.name: r.race_grade for r in (await db_session.execute(select(HistoricalRace))).scalars()}
+    assert grades == {'测试赛': 'JPN1', '障碍赛': '自定义'}
+    assert not await get_leaderboard(db_session, race_grade=['J·G1'])
+    assert (await get_leaderboard(db_session, race_grade=['自定义']))[0].total_points == -5
     assert len((await db_session.execute(select(HistoricalScore))).scalars().all()) == 2
 
 

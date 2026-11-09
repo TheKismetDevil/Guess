@@ -56,6 +56,9 @@ def parse_workbook(content: bytes):
             age, sex, grade, country, surface = tags
             sex = {'牝马': '牝限', '牡牝': '牡牝限', '牡马': '牡限'}.get(sex, sex)
             grade = {'Jpn1': 'JPN1', 'Jpn2': 'JPN2'}.get(grade, grade)
+            # Steeplechase J·G1 is not a separate grade category; treat it as 自定义.
+            if grade.upper().replace('·', '').replace('・', '').replace('.', '').replace('-', '').replace(' ', '') == 'JG1':
+                grade = '自定义'
             country = {'沙特阿拉伯': '沙特'}.get(country, country)
             surface = '障碍' if surface.startswith('障碍') else surface
             metadata[name] = dict(name=name, date=when, age_range=age, sex_restriction=sex, race_grade=grade, country=country, surface=surface, distance=distance, horse_count=horse_count)

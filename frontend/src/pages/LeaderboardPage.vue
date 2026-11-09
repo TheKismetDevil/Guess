@@ -47,7 +47,7 @@ const filters = ref<LeaderboardFilters>({})
 const tagSections: { field: TagField; label: string; options: string[]; grid?: boolean }[] = [
   { field: 'age_range', label: '年龄范围', options: AGE_RANGE_OPTIONS },
   { field: 'sex_restriction', label: '性别限定', options: SEX_RESTRICTION_OPTIONS },
-  { field: 'race_grade', label: '比赛等级', options: [...RACE_GRADE_OPTIONS, 'J·G1'] },
+  { field: 'race_grade', label: '比赛等级', options: RACE_GRADE_OPTIONS },
   { field: 'country', label: '国家或地区', options: COUNTRY_OPTIONS, grid: true },
   { field: 'surface', label: '场地', options: SURFACE_OPTIONS },
 ]
