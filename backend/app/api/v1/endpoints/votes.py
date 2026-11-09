@@ -1,7 +1,5 @@
 """Vote API endpoints — voting and lock operations."""
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,7 +42,6 @@ async def cast_vote(
         race_horse_id=data.race_horse_id,
     )
 
-    # Vote is already eager-loaded with race_horse_rel by the service
     horse_name = vote_service.resolve_horse_name(vote)
 
     response_data = VoteResponse(
@@ -54,7 +51,6 @@ async def cast_vote(
         race_horse_id=vote.race_horse_id,
         horse_name=horse_name,
         created_at=vote.created_at,
-        updated_at=vote.updated_at,
     )
 
     response.status_code = sc
@@ -72,7 +68,7 @@ async def list_votes(
     entries = [
         VoteListEntry(
             user_id=v.user_id,
-            username=v.user.username if v.user else "unknown",
+            username=v.user.username if v.user and v.user.username else "unknown",
             avatar_key=avatar_key(v.user.qq) if v.user else None,
             race_horse_id=v.race_horse_id,
             horse_name=vote_service.resolve_horse_name(v),
@@ -116,7 +112,7 @@ async def cancel_vote(
 async def lock_race(
     race_id: int,
     db: AsyncSession = Depends(get_db),
-    admin=Depends(get_current_admin),
+    _admin=Depends(get_current_admin),
 ):
     """Lock a race's voting. Admin only."""
     race = await vote_service.lock_race(db, race_id)
@@ -125,6 +121,5 @@ async def lock_race(
             "id": race.id,
             "name": race.name,
             "status": race.status.value,
-            "updated_at": race.updated_at.isoformat(),
         }
     }

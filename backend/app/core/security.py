@@ -10,13 +10,9 @@ from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Password hashes starting with this prefix can never be used to log in
-# (placeholder accounts created for historical QQ identities use it).
-UNUSABLE_PASSWORD_PREFIX = "!"
 
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    if hashed_password.startswith(UNUSABLE_PASSWORD_PREFIX):
+def verify_password(plain_password: str, hashed_password: str | None) -> bool:
+    if not hashed_password:
         return False
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -27,8 +23,8 @@ def get_password_hash(password: str) -> str:
 
 def opaque_key(kind: str, value: str) -> str:
     """Stable public identifier that does not reveal the underlying value (e.g. a QQ number)."""
-    digest = hmac.new(settings.jwt_secret.encode(), f'{kind}:{value}'.encode(), hashlib.sha256).hexdigest()
-    return f'{kind}:{digest}'
+    digest = hmac.new(settings.jwt_secret.encode(), f"{kind}:{value}".encode(), hashlib.sha256).hexdigest()
+    return f"{kind}:{digest}"
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

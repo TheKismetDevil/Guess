@@ -1,6 +1,6 @@
 """Horse-related Pydantic schemas."""
 
-from datetime import date, datetime
+from datetime import date
 
 from pydantic import BaseModel, field_validator
 
@@ -96,8 +96,5 @@ class HorseResponse(BaseModel):
     previous_result_position: int | None = None
     best_win: str | None = None
     best_win_date: date | None = None
-    manually_updated_fields: list[str] | None = None
-    created_at: datetime
-    updated_at: datetime
 
     model_config = {"from_attributes": True}

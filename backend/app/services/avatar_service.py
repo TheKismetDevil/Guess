@@ -19,7 +19,6 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.models.historical_score import HistoricalScore
 from app.models.user import User
 
 _KEY_CONTEXT = b'guess:qq-avatar:v1'
@@ -82,9 +81,8 @@ async def resolve_qq(db, key: str) -> str | None:
         qq = _avatar_cipher().decrypt(ciphertext, [_KEY_CONTEXT]).decode('ascii')
     except (ValueError, InvalidTag):
         return None
-    user_exists = select(User.id).where(User.qq == qq).exists()
-    score_exists = select(HistoricalScore.id).where(HistoricalScore.qq == qq).exists()
-    return qq if await db.scalar(select(user_exists | score_exists)) else None
+    user_exists = select(User.id).where(User.qq == qq, User.username.isnot(None)).exists()
+    return qq if await db.scalar(select(user_exists)) else None
 
 
 async def download(url: str) -> httpx.Response:

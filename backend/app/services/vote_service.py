@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.race import Race, RaceHorse, RaceStatus
-from app.models.user import User
 from app.models.vote import Vote
 
 
@@ -19,7 +18,6 @@ async def create_or_update_vote(
     Returns (Vote, status_code) where status_code is 201 for new or 200 for update.
     Handles concurrent upsert via IntegrityError catch-and-retry.
     """
-    # Validate race exists and is in VOTING status
     stmt = select(Race).where(Race.id == race_id)
     result = await db.execute(stmt)
     race = result.scalar_one_or_none()
@@ -34,7 +32,6 @@ async def create_or_update_vote(
             detail={"code": "VOTE_LOCKED", "message": "投票已截止"},
         )
 
-    # Validate race_horse_id belongs to this race
     stmt = select(RaceHorse).where(
         RaceHorse.id == race_horse_id, RaceHorse.race_id == race_id
     )
@@ -46,7 +43,6 @@ async def create_or_update_vote(
             detail={"code": "INVALID_HORSE", "message": "马匹不属于该比赛"},
         )
 
-    # Upsert: check existing vote for (user_id, race_id)
     stmt = select(Vote).where(Vote.user_id == user_id, Vote.race_id == race_id)
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -68,8 +64,6 @@ async def create_or_update_vote(
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        # TOCTOU: concurrent request inserted same (user_id, race_id)
-        # Retry with SELECT → UPDATE
         stmt = select(Vote).where(Vote.user_id == user_id, Vote.race_id == race_id)
         result = await db.execute(stmt)
         vote = result.scalar_one()
@@ -78,7 +72,6 @@ async def create_or_update_vote(
         await db.refresh(vote)
         return vote, 200
 
-    # Re-fetch with eager-loaded relationships for horse name resolution
     stmt = (
         select(Vote)
         .options(selectinload(Vote.race_horse_rel))
@@ -101,8 +94,7 @@ async def get_race_votes(db: AsyncSession, race_id: int) -> list[Vote]:
         .order_by(Vote.created_at)
     )
     result = await db.execute(stmt)
-    votes = list(result.scalars().all())
-    return votes
+    return list(result.scalars().all())
 
 
 def resolve_horse_name(vote: Vote) -> str:
@@ -117,7 +109,6 @@ async def delete_vote(
     db: AsyncSession, race_id: int, user_id: int
 ) -> None:
     """Delete a user's vote for a race if the race is still in VOTING status."""
-    # Validate race exists and is in VOTING status
     stmt = select(Race).where(Race.id == race_id)
     result = await db.execute(stmt)
     race = result.scalar_one_or_none()
@@ -132,7 +123,6 @@ async def delete_vote(
             detail={"code": "VOTE_LOCKED", "message": "投票已截止，无法取消"},
         )
 
-    # Find and delete the user's vote
     stmt = select(Vote).where(Vote.user_id == user_id, Vote.race_id == race_id)
     result = await db.execute(stmt)
     vote = result.scalar_one_or_none()
@@ -174,12 +164,7 @@ async def lock_race(db: AsyncSession, race_id: int) -> Race:
 async def get_race_results_grouped_by_horse(
     db: AsyncSession, race_id: int
 ) -> list[dict]:
-    """For a settled race, load all votes grouped by race_horse_id.
-
-    Returns list of dicts with race_horse data and votes per horse,
-    sorted by position (1st, 2nd... DNF last).
-    Includes horses with zero votes (empty votes list).
-    """
+    """For a settled race, load all votes grouped by race_horse_id."""
     stmt = (
         select(RaceHorse)
         .options(
@@ -200,19 +185,21 @@ async def get_race_results_grouped_by_horse(
 
     output = []
     for rh in race_horses:
-        votes = []
-        for v in rh.votes:
-            votes.append({
-                "username": v.user.username if v.user else "unknown",
+        votes = [
+            {
+                "username": v.user.username if v.user and v.user.username else "unknown",
                 "points": v.points,
-            })
-        output.append({
-            "race_horse_id": rh.id,
-            "horse_id": rh.horse_id,
-            "snapshot_data": rh.snapshot_data,
-            "position": rh.position,
-            "weight": rh.weight,
-            "jockey": rh.jockey,
-            "votes": votes,
-        })
+            }
+            for v in rh.votes
+        ]
+        output.append(
+            {
+                "race_horse_id": rh.id,
+                "horse_id": rh.horse_id,
+                "snapshot_data": rh.snapshot_data,
+                "position": rh.position,
+                "jockey": rh.jockey,
+                "votes": votes,
+            }
+        )
     return output

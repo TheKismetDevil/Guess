@@ -33,7 +33,6 @@ async def create_horse(db: AsyncSession, data: HorseCreate) -> Horse:
 
     Raises 409 if a horse with the same name already exists.
     """
-    # Check for duplicate name
     existing = await db.execute(
         select(Horse).where(Horse.name == data.name)
     )
@@ -115,37 +114,6 @@ async def update_horse(
     for field, value in update_data.items():
         setattr(horse, field, value)
 
-    # Track manually edited fields for auto-update protection
-    tracked_fields = [f for f in update_data.keys() if f not in ("name", "manually_updated_fields")]
-    if tracked_fields:
-        current_protected = horse.manually_updated_fields
-        protected_list = list(current_protected) if isinstance(current_protected, list) else []
-        for f in tracked_fields:
-            if f not in protected_list:
-                protected_list.append(f)
-        horse.manually_updated_fields = protected_list
-
-    await db.flush()
-    await db.refresh(horse)
-    return horse
-
-
-async def reset_auto_protection(
-    db: AsyncSession, horse_id: int
-) -> Horse:
-    """Clear the manually_updated_fields protection list for a horse.
-
-    After reset, all fields become eligible for auto-update overwrite.
-    Raises 404 if horse not found.
-    """
-    horse = await get_horse(db, horse_id)
-    if horse is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "NOT_FOUND", "message": "马匹不存在"},
-        )
-
-    horse.manually_updated_fields = None
     await db.flush()
     await db.refresh(horse)
     return horse
@@ -168,11 +136,7 @@ async def delete_horse(db: AsyncSession, horse_id: int) -> None:
 
 
 async def get_origins_stats(db: AsyncSession) -> list[dict]:
-    """Get origin (country) usage frequency statistics with hemisphere info.
-
-    Returns list of {origin, count, hemisphere} sorted by count descending,
-    then by origin alphabetically. Hemisphere is the most common value for that origin.
-    """
+    """Get origin (country) usage frequency statistics with hemisphere info."""
     stmt = (
         select(Horse.origin, func.count(Horse.id).label("count"))
         .where(Horse.origin.isnot(None))
@@ -202,11 +166,7 @@ async def _get_common_hemisphere(db: AsyncSession, origin: str) -> str | None:
 
 
 async def get_locations_stats(db: AsyncSession) -> list[dict]:
-    """Get location (training stable) usage frequency statistics.
-
-    Returns list of {location, count} sorted by count descending,
-    then by location alphabetically.
-    """
+    """Get location (training stable) usage frequency statistics."""
     stmt = (
         select(Horse.location, func.count(Horse.id).label("count"))
         .where(Horse.location.isnot(None))
@@ -218,11 +178,7 @@ async def get_locations_stats(db: AsyncSession) -> list[dict]:
 
 
 async def toggle_hemisphere(db: AsyncSession, origin: str) -> dict:
-    """Toggle hemisphere for all horses with the given origin.
-
-    north → south, south → north.
-    Returns {origin, new_hemisphere, affected_count}.
-    """
+    """Toggle hemisphere for all horses with the given origin."""
     stmt = select(Horse).where(Horse.origin == origin, Horse.hemisphere.isnot(None))
     result = await db.execute(stmt)
     horses = list(result.scalars().all())
@@ -244,12 +200,7 @@ async def toggle_hemisphere(db: AsyncSession, origin: str) -> dict:
 async def update_best_win(
     db: AsyncSession, horse_id: int, race_id: int
 ) -> Horse:
-    """Update a horse's best_win to the specified race.
-
-    Validates the horse participated in the race and won (position=1).
-    Raises 404 if horse not found.
-    Raises 400 if horse didn't win the race.
-    """
+    """Update a horse's best_win to the specified race."""
     horse = await get_horse(db, horse_id)
     if horse is None:
         raise HTTPException(
@@ -257,7 +208,8 @@ async def update_best_win(
             detail={"code": "NOT_FOUND", "message": "马匹不存在"},
         )
 
-    from app.models.race import Race, RaceHorse
+    from app.models.race import RaceHorse
+
     stmt = (
         select(RaceHorse)
         .options(selectinload(RaceHorse.race))
