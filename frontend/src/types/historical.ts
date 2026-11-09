@@ -1,4 +1,4 @@
-type ScoreValue = { qq: string; display_name: string; points: number }
+type ScoreValue = { qq: string; points: number }
 export type ImportDifference =
   | { kind: 'metadata'; field: string; before: string | number; after: string | number }
   | { kind: 'score'; qq: string; before: ScoreValue | null; after: ScoreValue | null }
@@ -16,9 +16,9 @@ export interface ImportPreview {
   preview_token: string
 }
 export interface ImportBatch {
-  id: number; filename: string; created_at: string; undone_at: string | null
+  id: number; filename: string; created_at: string
   race_count: number; score_count: number
   updated_races: number
 }
 export interface HistoryRace { id: number; name: string; date: string; score_count: number }
-export interface HistoryScore { id: number; qq: string; display_name: string; points: number }
+export interface HistoryScore { id: number; qq: string; username: string; points: number }

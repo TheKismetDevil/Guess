@@ -85,6 +85,13 @@ const createForm = ref({
 const creating = ref(false)
 const createError = ref('')
 
+const validDistance = computed<number | null>(() => {
+  const raw = String(createForm.value.distance ?? '').trim()
+  if (!/^[1-9]\d*$/.test(raw)) return null
+  const num = Number(raw)
+  return Number.isSafeInteger(num) && num >= 1 && num <= 2147483647 ? num : null
+})
+
 // Toggle hidden state
 const togglingHiddenId = ref<number | null>(null)
 
@@ -142,7 +149,8 @@ function closeCreateModal() {
 }
 
 async function handleCreateRace() {
-  if (!createForm.value.name.trim() || !createForm.value.date || !createForm.value.distance.trim() || creating.value) return
+  const distance = validDistance.value
+  if (!createForm.value.name.trim() || !createForm.value.date || distance === null || creating.value) return
   creating.value = true
   createError.value = ''
   try {
@@ -156,7 +164,7 @@ async function handleCreateRace() {
       sex_restriction: createForm.value.sex_restriction,
       race_grade: createForm.value.race_grade,
       country: createForm.value.country,
-      distance: createForm.value.distance.trim(),
+      distance,
       surface: createForm.value.surface,
       horse_ids: [],
       custom_scoring: customScoring,
@@ -392,8 +400,8 @@ onMounted(loadData)
             <input id="race-date" v-model="createForm.date" class="ui-input" type="date" :class="{ 'is-empty': !createForm.date }" />
           </div>
           <div class="form-group">
-            <label for="race-distance">长度</label>
-            <input id="race-distance" v-model="createForm.distance" class="ui-input" type="text" placeholder="例：1200m" />
+            <label for="race-distance">距离（米）</label>
+            <input id="race-distance" v-model="createForm.distance" class="ui-input" type="number" min="1" step="1" inputmode="numeric" placeholder="例：1200" />
           </div>
         </div>
         <div v-for="group in tagGroups" :key="group.key" class="form-group">
@@ -445,7 +453,7 @@ onMounted(loadData)
         <div class="modal-actions">
           <button
             class="ui-btn ui-btn--primary modal-btn"
-            :disabled="creating || !createForm.name.trim() || !createForm.date || !createForm.distance.trim() || (showCustomFields && !createForm.positiveScores.trim())"
+            :disabled="creating || !createForm.name.trim() || !createForm.date || validDistance === null || (showCustomFields && !createForm.positiveScores.trim())"
             @click="handleCreateRace"
           >
             <span v-if="creating" class="ui-spinner"></span>

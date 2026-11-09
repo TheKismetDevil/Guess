@@ -23,7 +23,7 @@ function diffLabel(diff: ImportDifference) {
 function diffValue(diff: ImportDifference, side: 'before' | 'after') {
   if (diff.kind === 'metadata') return String(diff[side])
   const score = diff[side]
-  return score ? `${score.display_name} · ${score.points} 分` : '无成绩（未参与）'
+  return score ? `${score.points} 分` : '无成绩（未参与）'
 }
 const busy = ref(false)
 const message = ref('')
@@ -160,7 +160,7 @@ async function confirmUndo() {
     ++detailRequest; ++scoreRequest
     batch.value = null; race.value = null; races.value = []; scores.value = []
     detailLoading.value = false; scoreLoading.value = false
-    message.value = '已撤销该批次的历史成绩，排行榜已重新计算。'
+    message.value = '已删除该导入批次并回滚对应历史成绩，排行榜已重新计算。'
     await loadBatches()
   } catch (err) { error.value = errorText(err) }
   finally { busy.value = false }
@@ -223,12 +223,11 @@ onMounted(loadBatches)
       <button v-else-if="pageState === 'error'" class="ui-btn ui-btn--ghost" @click="loadBatches">加载失败，点击重试</button>
       <div v-else class="table-wrap"><table><thead><tr><th>文件 / 批次</th><th>导入时间</th><th>比赛 / 成绩</th><th>操作</th></tr></thead>
         <tbody><tr v-for="item in batches" :key="item.id"><td>{{ item.filename }}</td><td>{{ new Date(item.created_at).toLocaleString('zh-CN') }}</td><td>{{ item.race_count }} / {{ item.score_count }}<span v-if="item.updated_races" class="batch-updates">另更新 {{ item.updated_races }} 场</span></td><td>
-          <span v-if="item.undone_at">已撤销</span>
-          <template v-else><button class="ui-btn ui-btn--ghost ui-btn--sm" :disabled="busy" @click="openBatch(item)">查看成绩</button><button class="ui-btn ui-btn--ghost ui-btn--sm danger" :disabled="busy" @click="undoTarget = item">撤销批次</button></template>
+          <button class="ui-btn ui-btn--ghost ui-btn--sm" :disabled="busy" @click="openBatch(item)">查看成绩</button><button class="ui-btn ui-btn--ghost ui-btn--sm danger" :disabled="busy" @click="undoTarget = item">撤销批次</button>
         </td></tr></tbody>
       </table></div>
       <div v-if="undoTarget" class="undo-confirm" role="alert">
-        <p>确认撤销「{{ undoTarget.filename }}」？将移除本批次新增的 {{ undoTarget.race_count }} 场比赛、{{ undoTarget.score_count }} 条成绩，并恢复 {{ undoTarget.updated_races }} 场更新前的数据。若存在后续导入更新或更新后的人工修分，会提示冲突并停止撤销。请保留原始 Excel。</p>
+        <p>确认撤销「{{ undoTarget.filename }}」？将删除该导入批次记录，移除新增的 {{ undoTarget.race_count }} 场比赛、{{ undoTarget.score_count }} 条成绩，并恢复 {{ undoTarget.updated_races }} 场更新前的数据。若存在后续导入更新或更新后的人工修分，会提示冲突并停止撤销。请保留原始 Excel。</p>
         <div class="actions"><button class="ui-btn ui-btn--danger-solid" :disabled="busy" @click="confirmUndo">确认撤销</button><button class="ui-btn ui-btn--ghost" :disabled="busy" @click="undoTarget = null">取消</button></div>
       </div>
     </section>
@@ -242,12 +241,12 @@ onMounted(loadBatches)
     </section>
     <section v-if="race" class="panel">
       <h2>{{ race.name }} · 成绩</h2>
-      <p>按 QQ 号与现有用户关联，修改得分后点击对应行的保存。</p>
+      <p>按用户身份关联，修改得分后点击对应行的保存。</p>
       <p v-if="scoreLoading" role="status">正在加载成绩…</p>
       <p v-else-if="scoreError" role="alert">{{ scoreError }} <button class="ui-btn ui-btn--ghost" @click="openRace(race)">重新加载</button></p>
       <p v-else-if="!scores.length">该比赛没有成绩。</p>
-      <div v-else class="table-wrap"><table><thead><tr><th>历史用户名</th><th>QQ 号</th><th>得分</th><th>操作</th></tr></thead>
-        <tbody><tr v-for="score in scores" :key="score.id"><td>{{ score.display_name }}</td><td>{{ score.qq }}</td><td><input v-model="score.draft" type="number" step="1" :aria-label="`${score.display_name}的得分`" :disabled="busy" /></td><td><button class="ui-btn ui-btn--primary ui-btn--sm" :disabled="busy || score.draft === '' || Number(score.draft) === score.points" @click="saveScore(score)">保存</button></td></tr></tbody>
+      <div v-else class="table-wrap"><table><thead><tr><th>用户名</th><th>QQ 号</th><th>得分</th><th>操作</th></tr></thead>
+        <tbody><tr v-for="score in scores" :key="score.id"><td>{{ score.username }}</td><td>{{ score.qq }}</td><td><input v-model="score.draft" type="number" step="1" :aria-label="`${score.username}的得分`" :disabled="busy" /></td><td><button class="ui-btn ui-btn--primary ui-btn--sm" :disabled="busy || score.draft === '' || Number(score.draft) === score.points" @click="saveScore(score)">保存</button></td></tr></tbody>
       </table></div>
       <button class="ui-btn ui-btn--ghost ui-btn--sm" :disabled="busy" @click="openRace(race)">重新加载成绩（放弃未保存修改）</button>
     </section>

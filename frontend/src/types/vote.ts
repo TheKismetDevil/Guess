@@ -11,7 +11,6 @@ export interface VoteResponse {
   race_horse_id: number
   horse_name: string
   created_at: string
-  updated_at: string
 }
 
 export interface VoteListEntry {

@@ -15,9 +15,6 @@ export interface Horse {
   previous_result_position: number | null
   best_win: string | null
   best_win_date: string | null
-  manually_updated_fields: string[] | null
-  created_at: string
-  updated_at: string
 }
 
 export interface HorseCreatePayload {

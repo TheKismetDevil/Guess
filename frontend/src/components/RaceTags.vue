@@ -11,7 +11,7 @@ const props = withDefaults(defineProps<{
     age_range: string
     sex_restriction: string
     country: string
-    distance: string
+    distance: number
     surface: string
   }
   onDark?: boolean
@@ -45,7 +45,7 @@ const surfaceClass = computed(() => {
     <span class="ui-chip">{{ race.age_range }}</span>
     <span v-if="race.sex_restriction !== '无'" class="ui-chip">{{ race.sex_restriction }}</span>
     <span class="ui-chip">{{ race.country }}</span>
-    <span class="ui-chip">{{ race.distance }}</span>
+    <span class="ui-chip">{{ race.distance }}m</span>
     <span class="ui-chip" :class="surfaceClass">
       <span class="surface-dot" aria-hidden="true"></span>{{ race.surface }}
     </span>
