@@ -66,7 +66,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 
 **Python/FastAPI:**
 - Files and variables: **snake_case** (`get_current_user`, `race_service.py`)
-- DB table names: **snake_case plural** (`users`, `races`, `horses`, `invite_codes`)
+- DB table names: **snake_case plural** (`users`, `races`, `horses`, `votes`)
 - All endpoints/services use `async def` — no sync endpoints
 - API prefix `/api/v1/` for all endpoints
 - Response format: success `{"data": ...}`, error `{"detail": {"code": "ERROR_CODE", "message": "..."}}`
@@ -138,7 +138,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 | Scope | Convention | Example |
 |-------|-----------|---------|
 | Python files/variables | snake_case | `get_current_user()`, `auth_service.py` |
-| Database table names | snake_case plural | `users`, `races`, `horses`, `invite_codes` |
+| Database table names | snake_case plural | `users`, `races`, `horses`, `votes` |
 | DB columns / foreign keys | snake_case | `user_id`, `race_name`, `created_at` |
 | TS/Vue component files | PascalCase | `RaceCard.vue`, `AdminLayout.vue`, `InviteCodeTable.vue` |
 | TS non-component files | camelCase | `useAuth.ts`, `apiClient.ts`, `authStore.ts` |
@@ -208,7 +208,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Login failure returns generic error: `"用户名或密码错误"` — no field-specific leak. However, LoginPage.vue catch block also handles Network Error (→ "网络错误，请重试"), 422 validation errors (→ field-level messages), and 500 (→ "服务器错误，请稍后重试").
 - Passwords hashed via bcrypt (passlib CryptContext)
 - Guests are read-only — voting requires authentication
-- Admin seed account: `app/utils/seed.py` creates default admin (username: `admin`, password: `admin123`, `is_admin=True`) on app startup. Idempotent — skips if already exists. Protected with `IntegrityError` guard for concurrent startup.
+- Admin seed account: `app/utils/seed.py` creates default admin (username: `admin`, password: `admin123`, `is_admin=True`, `invite_code=None`) on app startup. Idempotent — skips if already exists. Protected with `IntegrityError` guard for concurrent startup.
 
 **Performance:**
 - No Redis/cache layer needed for v1 — direct DB queries suffice for ~100 users
@@ -218,18 +218,22 @@ _This file contains critical rules and patterns that AI agents must follow when 
 **Edge cases:**
 - Race horse data uses **snapshot** mechanism — horse attributes at creation time are frozen in `RaceHorse.snapshot_data` JSON. Race detail pages read from snapshot_data, NOT the live Horse table. Editing a race does NOT update existing snapshots; new horses added via edit get fresh snapshots at add time.
 - Race status machine: `voting` → `locked` → `settled` (one direction). Only `voting` races are editable. `locked` races block voting. `settled` races are final (can only modify results).
-- Race grade replaced with **6-tag system**: `age_range`（2岁/2+岁/3岁/3+岁/4+岁/其他）, `sex_restriction`（无/牝限/牡牝限/牡限）, `race_grade`（G1/G2/JPN1/其他/自定义）, `country`（日本/英国/美国/.../其他）, `distance`（自由输入字符串如"1200m"）, `surface`（草地/泥地/全天候/障碍/其他）。Custom scoring 只在使用 `race_grade="自定义"` 时生效，格式: `{"positive_scores": [10,7,5,3,2,1], "penalty_rules": [{"position": -1, "points": -5}]}`。旧 `GradeEnum` 已移除。`sex_restriction` 为"无"时前端不渲染对应 tag。
+- Race grade replaced with **6-tag system**: `age_range`（2岁/2+岁/3岁/3+岁/4+岁/其他）, `sex_restriction`（无/牝限/牡牝限/牡限）, `race_grade`（G1/G2/JPN1/其他/自定义）, `country`（日本/英国/美国/.../其他）, `distance`（正整数米数，如 `1200`，前端展示拼接 `m`）, `surface`（草地/泥地/全天候/障碍/其他）。Custom scoring 只在使用 `race_grade="自定义"` 时生效，格式: `{"positive_scores": [10,7,5,3,2,1], "penalty_rules": [{"position": -1, "points": -5}]}`。旧 `GradeEnum` 已移除。`sex_restriction` 为"无"时前端不渲染对应 tag。
 - Settled races cannot be deleted — only result modification with full rollback/recalculate. `voting` 和 `locked` 状态的比赛可以删除（含级联删除投票记录）。删除操作需要管理员权限和二次确认弹窗，使用 `ConfirmDeleteModal` 组件。
 - `HomePage.vue` 底部悬浮按钮创建比赛（管理员可见），带有弹窗。管理后台通过首页管理入口旁的下拉菜单访问。
 - DNF/scratched horses score 0 points and are excluded from deduction calculation denominators
 - Custom scoring rules apply only to the current race — not saved as templates
-- Password reset uses **invite_code** only (no username needed) — looks up the bound user via `invite_code.bound_username`. All failure cases return the same `INVITE_CODE_MISMATCH` error to prevent user enumeration. ResetPasswordPage is a single-step form (invite_code + new_password).
-- **邀请码系统三大变更**：
-  1. **生成时绑定 QQ**：管理员在后台输入 QQ 号后点击生成邀请码，`bound_qq` 在创建时即设值，`status` 为 `unused`。
-  2. **注册时校验 QQ**：`register()` 校验 `invite_code.bound_qq == request.qq`，不匹配返回 `QQ_MISMATCH`。
-  3. **管理员删除级联**：`DELETE /api/v1/admin/invite-codes/{code}` 级联删除邀请码 + 绑定用户 + 用户投票（User FK CASCADE）+ 该 QQ 的历史成绩。`unused` 码只删邀请码本身；占位用户的码不可删除（409 `PLACEHOLDER_PROTECTED`）。
-- **邀请码状态**：`unused`（尚未使用）、`used`（已绑定账户）、`disabled`（已停用）。迁移会停用同一 QQ 的多余待用码，后台仍可查看和删除这些码。
-- **登录三种模式**（`LoginRequest` 所有字段可选，按优先级判断）：`invite_code`（无密码，查 `bound_username` 登录）/ `qq`（+密码查 `User.qq`）/ `username`（+密码查 `User.username`）。`unused` 码返回 `"该邀请码尚未绑定用户"`，不存在的码返回 `"用户名或密码错误"`。
+- Password reset uses **invite_code** only (no username needed) — looks up the activated non-admin user (`User.invite_code == code`, `User.is_admin == False`, `User.password_hash.isnot(None)`). All failure cases (including unactivated/pending invite codes) return the same `INVITE_CODE_MISMATCH` error to prevent user enumeration. ResetPasswordPage is a single-step form (invite_code + new_password).
+- **邀请码与用户单表模型（无独立 `invite_codes` 表）**：
+  1. **单表生命周期**：`users` 表合并管理邀请码与账户（`qq` 全局非空唯一 `ix_users_qq`，`invite_code` 可空唯一 `ix_users_invite_code`，`username` 可空唯一 `ix_users_username`，`password_hash` 可空）：
+     - 管理员：`is_admin=True, username='admin', password_hash='<hash>', invite_code=None`
+     - 待注册邀请码（`unused`）：`is_admin=False, username=None, password_hash=None, invite_code='XXXXXXXX'`
+     - 历史成绩占位用户（`unused` + 占位）：`is_admin=False, username='<name>', password_hash=None, invite_code='XXXXXXXX'`（`is_placeholder()` 判定：`not user.is_admin and user.password_hash is None and user.username is not None`）
+     - 已注册正式用户（`used`）：`is_admin=False, username='<name>', password_hash='<hash>', invite_code='XXXXXXXX'`
+  2. **注册校验 QQ**：`register()` 校验邀请码关联行的 `user.qq == request.qq`，不匹配返回 `QQ_MISMATCH`；已激活账户返回 `INVITE_CODE_INVALID`；原地填充 `username` 与 `password_hash` 激活该行（保留原 `user.id`）。
+  3. **管理员删除级联**：`DELETE /api/v1/admin/invite-codes/{code}` 删除待用码行，或级联删除已注册用户 + 投票（`votes.user_id` CASCADE）+ 历史成绩（`historical_scores.user_id` CASCADE）。占位用户的邀请码不可删除（409 `PLACEHOLDER_PROTECTED`）。
+- **邀请码状态**：仅 `unused`（`password_hash is None`）与 `used`（`password_hash is not None`）两种派生状态（已移除 `disabled` 状态）。
+- **登录三种模式**（`LoginRequest` 所有字段可选，按优先级判断）：`invite_code`（无密码，查 `User.invite_code` 登录；`password_hash is None` 返回 `"该邀请码尚未绑定用户"`）/ `qq`（+密码查 `User.qq`）/ `username`（+密码查 `User.username`）。不存在或未设密码的账户返回 `"用户名或密码错误"`。
 
 **Voting System 模式（Story 3.2）：**
 - Vote 模型：`(user_id, race_id)` 唯一约束实现一用户一票一赛。`race_horse_id` FK 指向 `race_horses.id`（**无** CASCADE——防止编辑比赛移除马匹时静默删除投票）。`user_id` 和 `race_id` FK 有 CASCADE（用户删除或比赛删除时级联清理）。
@@ -241,15 +245,12 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **编辑比赛防删票保护**：`race_service.update_race()` 在移除马匹时，先查询 `Vote` 表检查被移除的 `race_horse_ids` 是否存在投票。若有投票存在，返回 400 `HORSE_HAS_VOTES` 拒绝操作。此保护覆盖 Story 3.2 中移除的 race_horse_id FK CASCADE 限制（无 DB 级 CASCADE，改由应用层保护）。
 
 **Service & DB patterns:**
-- `flush()` 后必须调用 `refresh()` 才能读取 `server_default`/`onupdate` 字段值（如 `created_at`、`updated_at`），否则 Pydantic `model_validate()` 会报 `MissingGreenlet` 错误。所有 CRUD 服务的 create/update 方法必须遵循 `flush()` → `refresh()` → return 模式。
+- **9 核心业务表架构与基线迁移**：全库精简为 9 张业务表（`users`、`horses`、`races`、`race_horses`、`votes`、`historical_import_batches`、`historical_import_changes`、`historical_races`、`historical_scores`），已移除 `invite_codes`、`horse_auto_update_logs`、`score_change_logs` 三张表及所有表上的 `updated_at`、`horses.created_at`、`horses.manually_updated_fields`、`races.creator_id`、`race_horses.weight`、`race_horses.created_at`。Alembic 迁移已压平重建为单一基线脚本 `backend/alembic/versions/001_initial_schema.py`（`revision = "001"`），PostgreSQL 集成测试通过 `compare_metadata` 强制校验 ORM 与迁移零差异。
+- `flush()` 后必须调用 `refresh()` 才能读取含 `server_default` 的字段值（如 `created_at`），否则 Pydantic `model_validate()` 会报 `MissingGreenlet` 错误。所有 CRUD 服务的 create/update 方法必须遵循 `flush()` → `refresh()` → return 模式。
 - Pydantic schemas：PATCH endpoint 使用的 Update schema（如 `HorseUpdate`）必须包含与 Create schema（如 `HorseCreate`）相同的 `@field_validator`，包括 `.strip()` 处理——因为用户可通过 API 直接调用 PATCH 绕过前端校验。
-- **PATCH 防 null 覆盖模式**：在 `update_race` 等 PATCH 服务中，`data.model_dump(exclude_unset=True)` 后必须过滤 `None` 值：`update_data = {k: v for k, v in update_data.items() if v is not None}`。否则客户端发送 `{"name": null}` 会覆盖数据库字段为 null 导致 500 错误。前端编辑应通过差异检测**仅发送变更的字段**。
-- **手动编辑追踪模式**：Horse 模型有 `manually_updated_fields` JSON 字段（存储字段名列表），`horse_service.update_horse()` 自动追踪手动编辑的字段（`name` 和 `manually_updated_fields` 自身被排除）。自动更新框架 `auto_update_service.apply_auto_updates()` 检查此列表：在列表中的字段跳过更新（手动优先），不在列表中的字段更新并记录到 `HorseAutoUpdateLog`。管理员可通过 `POST /api/v1/horses/{id}/reset-auto-protection` 清空保护列表。
-- **前走字段自动更新例外规则**：`previous_result`, `previous_result_date`, `previous_result_position` 三个字段在 `result_service.submit_results()` 中**绕过** `auto_update_service.apply_auto_updates()` 的编辑保护检查，直接更新 Horse 表。原因是前走是时间序列数据——更晚的比赛结果始终应该覆盖旧结果，以 `race.date >= prev_date` 日期比较为唯一判断条件。变更仍会记录到 `HorseAutoUpdateLog`。此例外规则避免了管理员手动编辑马匹后，后续比赛结算无法更新前走的问题。
-- **事务原子性模式**：`apply_auto_updates` 遵循"先全部验证再批量更新"模式——先验证所有 horse_id 存在，再逐个更新 + flush + refresh。调用方必须在同一事务中包裹此调用。
-- **字段名校验模式**：通过 `inspect(Horse).columns` 获取有效列名集合，在 `apply_auto_updates` 中验证 `field_name` 是否有效，无效字段返回 400 `INVALID_FIELD`。避免 `setattr` 动态创建属性导致静默丢失更新。
-- **变更日志模式**：`HorseAutoUpdateLog` 模型记录每次自动更新的字段级变更（old_value/new_value 为 Text 类型避免截断），`trigger_source` 标记触发来源（v1 固定 "settlement"）。外键：`horse_id` CASCADE, `race_id` SET NULL。
-- **Alembic 迁移枚举经验**：使用 `sa.Enum` 创建 PostgreSQL 枚举时，SQLAlchemy 默认使用 Python enum 的**成员名**（大写）作为数据库枚举值。手写迁移创建枚举时需保持大小写一致。推荐使用 `op.execute("CREATE TYPE ... AS ENUM (...)")` + `ENUM(..., create_type=False)` 模式以实现幂等迁移。
+- **PATCH 防 null 覆盖模式**：在 `update_race` 等 PATCH 服务中，`data.model_dump(exclude_unset=True)` 后必须过滤 `None` 值：`update_data = {k: v for k, v in update_data.items() if v is not None}`（仅显式支持清空的字段如 `RaceHorseUpdate.jockey` 例外）。前端编辑应通过差异检测**仅发送变更的字段**。
+- **前走字段结算直写模式**：已移除 `auto_update_service.py`、`Horse.manually_updated_fields` 与 `POST /api/v1/horses/{id}/reset-auto-protection`。`result_service.submit_results()` 结算时按 `race.date >= prev_date` 日期比较直接更新 `Horse` 表的 `previous_result`、`previous_result_date`、`previous_result_position`。
+- **Race 状态约束约定**：不使用 PostgreSQL 原生 `ENUM` 类型；`races.status` 使用小写 `VARCHAR(20)` + `CHECK (status IN ('voting', 'locked', 'settled'))`（约束名 `ck_races_status`，`server_default='voting'`），ORM 层使用 `StrEnum` + `native_enum=False`。
 
 **Scoring Engine 纯函数模式（Story 3.1）：**
 - `scoring_engine.py` 必须是纯函数模块，零外部依赖，仅允许 `from typing import Any`。禁止导入 FastAPI、SQLAlchemy 或任何 DB 相关模块。
@@ -257,7 +258,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - 新增 `derive_scoring_grade(age_range: str, race_grade: str) -> str` 将 5-tag 映射到 4 种评分模式：`"2岁"+G1→YOUNG_G1`、非G1/非自定义→G2_JPN1、自定义→CUSTOM、其他→G1。结算时调用 `calculate_score(grade=derive_scoring_grade(...))`。
 - G1 扣分使用**绝对位置转换公式**：`penalty_position = total_horses + offset + 1`，其中 `offset` 为负数（-1=最后一名，-2=倒数第二名，依此类推）。
 - G1 扣分分档：≥8匹扣末3名(-10/-5/-1)、7匹扣末2名(-5/-1)、6匹扣末1名(-1)、≤5匹无扣分。
-- G2_JPN1：正分 +5/+3/+1（仅前三名），不扣分。迁移 021 按已存名次重算适用该规则的已结算投票积分，并将实际变动写入积分变更记录。
+- G2_JPN1：正分 +5/+3/+1（仅前三名），不扣分。
 - YOUNG_G1：正分同 G1（+10/+5/+3/+2/+1），不扣分。
 - CUSTOM：从 `custom_scoring` 字典读取 `positive_scores`（list[int]，1-indexed）和可选的 `penalty_rules`（list[dict]，position 为负偏移，points 为扣分值）。若某名次同时有正序积分和扣分，则**加分优先**（豁免扣分），与 G1 原则一致——一个名次不会既加分又扣分。
 - DNF/退赛：`position <= 0` 返回 0 分。
@@ -332,42 +333,40 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **位置连续校验模式**：`ResultEntry.validate_positions()` 在 schema 层校验 `sorted(positive_positions) == list(range(1, len(positive_positions) + 1))`，确保名次无间隔。此校验防止管理员提交 1,3,4,5 等不连续位置导致评分引擎计算错误。
 
 **排行榜模式（Story 3.5）：**
-- **Leaderboard 聚合查询模式**：`leaderboard_service.get_leaderboard()` 聚合在线投票积分后按 QQ 合并历史成绩，0分计入参与场数，未参与用户返回0。`sort_by` 支持 `total_points`（默认，总分降序再场均）和 `avg_points`（场均降序再总分）。场均模式仅保留参赛次数达到当前筛选有效比赛数60%的选手（`(N*3+4)//5` 向上取整），N复用 `get_matching_races` 的比赛口径，包含0分，不计无成绩/仅管理员成绩的赛事；总分模式不套用门槛。页面小字显示筛选比赛数和所需参与场数，全部被排除时显示门槛空态。排序使用 `Fraction(total_points, races_participated)` 精确比值；接口场均保留3位小数，前端 `toFixed(3)` 补足尾零。SQL 均值使用 `ROUND(CAST(sum / divisor AS NUMERIC), 3)`，PostgreSQL 必须显式转为 `Numeric`。排行榜按当前排序指标计算距榜首/上一名差值，场均模式差值同样显示3位小数；`appliedSort` 与成功响应绑定，避免异步请求导致指标与行顺序不一致。
+- **Leaderboard 聚合查询模式**：`leaderboard_service.get_leaderboard()` 直接按 `user_id` 聚合非管理员且已具名用户（`User.is_admin == False, User.username.isnot(None)`）的在线投票积分（`votes`）与历史成绩（`historical_scores`），0分计入参与场数，未参与用户返回0。`sort_by` 支持 `total_points`（默认，总分降序再场均）和 `avg_points`（场均降序再总分）。场均模式仅保留参赛次数达到当前筛选有效比赛数60%的选手（`(N*3+4)//5` 向上取整），N复用 `get_matching_races` 的比赛口径，包含0分，不计无成绩/仅管理员成绩的赛事；总分模式不套用门槛。页面小字显示筛选比赛数和所需参与场数，全部被排除时显示门槛空态。排序使用 `Fraction(total_points, races_participated)` 精确比值；接口场均保留3位小数，前端 `toFixed(3)` 补足尾零。SQL 均值使用 `ROUND(CAST(sum / divisor AS NUMERIC), 3)`，PostgreSQL 必须显式转为 `Numeric`。排行榜按当前排序指标计算距榜首/上一名差值，场均模式差值同样显示3位小数；`appliedSort` 与成功响应绑定，避免异步请求导致指标与行顺序不一致。
 - **Leaderboard 筛选子查询模式**：支持按 6 个 tag 筛选（age_range/sex_restriction/race_grade/country/surface 为多选），以及 distance、horse_count 范围筛选。**CRITICAL**：筛选条件**不能**放在 `Vote LEFT JOIN Race` 的 ON 子句中——LEFT JOIN 保留所有 Vote 行，不匹配的 Race 导致 Race 列为 NULL 但 Vote.points 仍参与 SUM。正确做法：有筛选时构建 `Vote INNER JOIN Race WHERE {filters}` 子查询，无筛选时用 `Vote WHERE points IS NOT NULL` 简版子查询，然后 `User LEFT JOIN subquery ON user_id`。未命中筛选的用户仍以 0 分显示。
 - **Leaderboard 公开端点模式**：`GET /api/v1/leaderboard` 无认证依赖（FR-23 要求公开访问），路由前缀 `/api/v1`。前端 `apiClient.get('/leaderboard')` 因 baseURL 为 `/api/v1` 正确匹配。
 - **排行榜排序菜单**：`LeaderboardSortSelect.vue` 使用 `defineModel<LeaderboardSort>`，选择改变后发出 `change`。使用页面内自定义 listbox（白底、圆角、阴影、绿色选中项及勾选图标），不再使用原生 `<select>` 展开菜单。支持方向键/Home/End 导航、Enter/空格确认、Esc/Tab/点击外部/焦点离开关闭；触发器保持焦点，使用 `aria-activedescendant` 标记活动选项。
 - **LeaderboardRow 组件模式**：`LeaderboardRow.vue` 使用原生 `<tr>`/`<td>`，接收 `entry`, `rank`, `isCurrentUser`, `leaderGap`, `previousGap` props。排行榜从第 1 名开始统一使用表格，不再展示前三名领奖台或金色特殊名次；榜首的“距上一名”为 0。保留当前用户高亮、`UserAvatar` QQ 头像（移动端缩小为 22px）及负分红色。
-- **Head to Head**：排行榜使用 `HeadToHeadComparison.vue` + `useHeadToHead.ts`，选择至少两位不同用户，沿用 `appliedFilters`；`/api/v1/leaderboard/participants` 提供稳定身份，`/api/v1/leaderboard/head-to-head` 用 repeated `participant_id` 参数，返回按选择顺序排列的用户列及共同比赛逐场得分。在线场次需已结算且全部所选用户都有非空分数；历史场次按 QQ 与唯一账户关联，QQ 多账户时不自动归属历史成绩。历史身份使用不含原始 QQ 的不透明 ID。0 分/负分计入交集，未公开比赛沿用原有遮蔽规则。组件用请求序号和卸载保护阻止旧查询覆盖新结果。
-- **历史成绩管理**：管理员入口 `/admin/historical-scores`（管理菜单和排行榜均有链接）。Excel 先调用 `/api/v1/admin/historical-scores/preview` 预览，再携带 `preview_token` 确认导入；预览不写库，数据变化返回 409。导入时场地以 `障碍` 开头统一为 `障碍`，所有障碍赛及非 `G1`/`G2`/`JPN1`/`自定义` 等级（如 `J·G1`、`G3`、`JPN2`）统一归入 `其他`（迁移 021 同步规范化既有数据与导入快照）。`historical_import_batches` 记录批次和撤销状态，`historical_races.import_batch_id` 关联批次；迁移 017 将既有历史记录归为一个批次。历史成绩修正携带 `expected_points` 防止覆盖并发修改。导入参数 `skip_identical`/`skip_empty` 默认均为 true，页面有对应的默认勾选项；0分算有效成绩，0条成绩默认跳过。取消跳过相同记录时使用 `reimport` 更新现有比赛而不创建重复项，取消无成绩过滤时允许空比赛参与导入/差异选择；选项纳入预览令牌，切换后重新预览并清空选择。同名同日期的已导入比赛默认在资料和全部成绩完全一致时跳过；差异逐场选择 `keep`/`replace`，所有冲突必须明确选择且带有效 `preview_token`。迁移 018 的 `historical_import_changes` 保存更新前后完整快照；更新保留原始批次归属，更新批次撤销恢复快照，存在后续有效导入或人工修分冲突时阻止撤销。
+- **Head to Head**：排行榜使用 `HeadToHeadComparison.vue` + `useHeadToHead.ts`，选择至少两位不同用户，沿用 `appliedFilters`；`/api/v1/leaderboard/participants` 返回所有具名非管理员用户（`u:{user.id}`），`/api/v1/leaderboard/head-to-head` 用 repeated `participant_id` 参数（兼容 `u:{id}` 或纯整数），直接按 `user_id` 查询在线已结算投票与 `historical_scores` 的共同比赛逐场得分。0 分/负分计入交集，未公开比赛沿用原有遮蔽规则。组件用请求序号和卸载保护阻止旧查询覆盖新结果。
+- **历史成绩管理**：管理员入口 `/admin/historical-scores`（管理菜单和排行榜均有链接）。Excel 先调用 `/api/v1/admin/historical-scores/preview` 预览，再携带 `preview_token` 确认导入；预览不写库，数据变化返回 409。导入时场地以 `障碍` 开头统一为 `障碍`，所有障碍赛及非 `G1`/`G2`/`JPN1`/`自定义` 等级（如 `J·G1`、`G3`、`JPN2`）统一归入 `其他`。`historical_scores` 通过 `user_id`（`FK -> users.id ON DELETE CASCADE`，`UNIQUE(race_id, user_id)`）关联 `users`，不再冗余存储 `qq` 和 `display_name`。`historical_import_batches` 仅保留有效批次（无 `undone_at` 列），撤销批次（`undo_batch`）在恢复快照或删除本批次新增比赛后**直接物理删除**该批次记录（`historical_import_changes.batch_id` 经 `ON DELETE CASCADE` 级联删除，`historical_races.import_batch_id` 为 `ON DELETE SET NULL`）。历史成绩修正携带 `expected_points` 防止覆盖并发修改。导入参数 `skip_identical`/`skip_empty` 默认均为 true；0分算有效成绩，0条成绩默认跳过。差异逐场选择 `keep`/`replace`，`historical_import_changes` 的 `before`/`after` 快照 `scores` 仅存 `[{'qq': qq, 'points': points}]`（不含 `display_name`），存在后续有效导入或人工修分冲突时阻止撤销。
 - **LeaderboardPage 模式**：`LeaderboardPage.vue` 使用 PageState 枚举（loading/empty/error/success）。success 态渲染原生 `<table>`（`<thead>`+`<th scope="col">`+`<tbody>`+`LeaderboardRow` as `<tr>`）。useDragSort composable 外的结构化表格数据优先使用原生 `<table>` 保证列对齐（与 DashboardPage、HorsesPage 一致）。empty 态条件：`data.length === 0 || data.every(e => e.races_participated === 0)`。
 - **LeaderboardPage 筛选交互模式**：多选标签和数字范围输入修改后**不立即触发 API**——用户选完所有条件后点击绿色实心"应用筛选"按钮一次性提交。"清除筛选"按钮立即生效。`v-model.number` 清空后产生空字符串 `""` → 使用 `toNum()` 辅助函数（`typeof v === 'number' && !isNaN(v) ? v : undefined`）过滤为非数字值。`hasActiveFilters()` 必须检查所有 7 个筛选维度（6 个 tag 数组 + 4 个数字范围），确保 surface 等维度不遗漏。
 - **排行榜排除 admin 模式**：`leaderboard_service.get_leaderboard()` 查询中添加 `.where(User.is_admin == False)` 过滤 admin 用户。admin 不能投票，无有效积分，不应出现在排行榜中。
 - **review 通过后的 story 状态转换**：code-review 发现被全部修复后，story 状态从 `review` → `done`。同时 sprint-status.yaml 同步更新。此流程在 code-review 工作流的 Step 6 中自动执行。
 - **catch 规范**：所有 `catch` 块必须使用 `catch (err)`（非裸 `catch`），以便区分错误类型。即使在仅设置 error 状态的简单场景中也需遵守此规范。
 
-**历史 QQ 占位用户：**
-- 历史成绩导入（`import_workbook`）完成后调用 `placeholder_user_service.ensure_placeholders()`：为写入成绩中**尚无任何账户**的 QQ 创建占位 `User`（`username` 取表格用户名，冲突时追加 `#2`、`#3`…；`password_hash` 以 `!placeholder:` 开头，永远无法登录）及一个 `unused`、`bound_qq` 为该 QQ 的邀请码；若该 QQ 已有 `unused` 邀请码则复用。导入结果返回 `placeholder_users` 数量。
-- 无需新增列/迁移：占位身份完全由 `password_hash` 前缀判断（`is_placeholder()`）。`security.verify_password()` 对 `!` 开头的哈希直接返回 False（passlib 遇到未知哈希会抛异常）。
-- 注册：`auth_service.register()` 锁定邀请码和 QQ 对应的用户行。占位用户只接受自身关联且绑定该 QQ 的待用码，原地更新用户名和密码，保留 `id`。旧的未绑定码仍可用于没有账户的 QQ。用户名唯一性检查排除被激活的占位用户本身。
-- 撤销导入或导入替换后调用 `remove_orphan_placeholders()`：同一条 `DELETE` 同时校验占位状态和 QQ 是否已无历史成绩，保留邀请码供重新导入/注册复用；撤销恢复旧快照时会先 `ensure_placeholders`。
-- 占位用户参与排行榜/Head to Head 时与普通用户一致（`kind='user'`）；排行榜和对比中按 QQ 合并的“未匹配历史身份”分支仍保留作兜底。
-- **占位用户受保护**：`GET /api/v1/admin/invite-codes` 通过 `users.invite_code` 关联返回 `placeholder_username`（搜索也匹配占位用户名）；管理页显示“占位·待注册”和“不可删除”，不渲染删除按钮。后端删除占位用户的邀请码返回 409 `PLACEHOLDER_PROTECTED`。
-
-**一个 QQ 一个账户：**
-- 迁移 `020` 用部分唯一索引 `uq_users_qq` 限制新账户，保留旧库重复 QQ 的全部账户和关联记录，同组中 ID 最小的账户留在唯一索引内。应用对所有已有账户检查 QQ 冲突。共享 QQ 的旧账户可用用户名或已绑定的邀请码登录，历史成绩仍按独立历史身份展示。
-- 部分唯一索引 `uq_invite_codes_unused_qq` 限制每个已绑定 QQ 的待用码数量。迁移优先保留占位账户关联的待用码，否则保留最早的待用码。`create_invite_code` 在并发创建冲突时返回 409 `QQ_HAS_UNUSED_CODE` 并提示保留的码。QQ 已有正式账户返回 409 `QQ_ALREADY_REGISTERED`；仅有占位用户且没有待用码时，新码会挂到该占位用户上。前端 `InviteCodeTable` 直接显示后端 `detail.message`。
-- `register`：没有占位用户、但该 QQ 已有账户时返回 400 `QQ_ALREADY_REGISTERED`（兜底历史遗留的未绑定 QQ 邀请码）。
-- 删除已使用的邀请码会级联删除用户和投票（FK CASCADE）。QQ 没有其他账户时同时删除该 QQ 的历史成绩；空的历史比赛保留。若之后撤销涉及这些比赛的“更新”批次，会因快照不一致返回 `UNDO_CONFLICT`。
+**历史 QQ 占位用户与一个 QQ 一个账户：**
+- `users.qq` 受全局唯一索引 `ix_users_qq` 约束（严格一个 QQ 一行 `User`）。
+- 历史成绩导入（`import_workbook`）写入成绩前先调用 `placeholder_user_service.ensure_placeholders()`：
+  - 若该 QQ 在 `users` 中尚无记录：新建占位 `User(username=<去重后表格名>, password_hash=None, qq=qq, invite_code=<8位随机码>, is_admin=False)`；
+  - 若该 QQ 已存在未设用户名/密码的待注册邀请码行（`username is None, password_hash is None`）：原地填充去重后的 `username` 升级为占位用户并复用其 `invite_code`；
+  - 若已有正式用户或占位用户：直接复用其 `user.id` 写入 `historical_scores.user_id`。
+- 占位身份由 `is_placeholder(user)` 判断：`not user.is_admin and user.password_hash is None and user.username is not None`（不再使用 `!placeholder:` 密码前缀）。`security.verify_password()` 对 `password_hash is None` 直接返回 `False`。
+- 撤销导入或导入替换后调用 `remove_orphan_placeholders()`：使用 `with_for_update()` 锁定已无任何 `HistoricalScore` 的占位用户行，将其 `username` 置回 `None`（退化为普通待注册邀请码行，保留原 `id`、`qq`、`invite_code` 供后续注册或再次导入复用，避免并发注册被误删）。
+- **占位用户受保护**：`GET /api/v1/admin/invite-codes` 直接查询 `users` 表返回 `placeholder_username`；管理页显示“占位·待注册”和“不可删除”。后端删除占位用户的邀请码返回 409 `PLACEHOLDER_PROTECTED`。
+- `create_invite_code`：QQ 已有正式账户（或管理员）返回 409 `QQ_ALREADY_REGISTERED`；已有未激活邀请码返回 409 `QQ_HAS_UNUSED_CODE` 并提示保留的码；若存在缺失邀请码的未激活行则原地补发。
+- 删除已使用的邀请码会删除对应 `User` 行并级联删除投票与历史成绩；空的历史比赛保留。若之后撤销涉及这些比赛的“更新”批次，会因快照不一致返回 `UNDO_CONFLICT`。
 - QQ 格式统一为 5–20 位 ASCII 数字（`app/utils/qq.py` 的 `is_valid_qq`，不用 `str.isdigit()`，避免全角数字）：注册、QQ 登录、生成邀请码和历史导入都校验；前端注册/登录/生成邀请码使用 `/^[0-9]{5,20}$/`。
 
 **QQ 头像（后端代理）：**
 - `avatar_key` 使用带 `v1_` 前缀的 URL 安全 AES-SIV 密文。服务端从 `jwt_secret` 派生独立密钥，公开号码标识保持稳定且不暴露原始 QQ。`LeaderboardEntry`、Head to Head 参与者、`VoteListEntry`、`UserInfo`（登录/注册/重置密码）均带 `avatar_key`。
-- `GET /api/v1/avatars/{avatar_key}`（公开）：先验证密文，再通过 `users.qq` 和 `historical_scores.qq` 的索引检查 QQ 是否存在；请求上游之前关闭查询会话。服务端复用模块级 `httpx.AsyncClient` 下载头像，并合并同一 QQ 的在途请求。仅接受 `image/*` 且 ≤512KB。成功缓存 3 天，非图片/4xx 缓存 1 分钟，超时/连接异常/5xx 可立即重试。响应 `Cache-Control` 跟随 `avatar_cache_seconds`；未知 key 或下载失败返回 404 `AVATAR_NOT_FOUND`。已保存旧版头像 key 的会话重新登录后会得到新版 key。
+- `GET /api/v1/avatars/{avatar_key}`（公开）：先验证密文，再通过 `users.qq` 唯一索引检查 QQ 是否存在（所有历史成绩关联用户均在 `users` 表中）；请求上游之前关闭查询会话。服务端复用模块级 `httpx.AsyncClient` 下载头像，并合并同一 QQ 的在途请求。仅接受 `image/*` 且 ≤512KB。成功缓存 3 天，非图片/4xx 缓存 1 分钟，超时/连接异常/5xx 可立即重试。响应 `Cache-Control` 跟随 `avatar_cache_seconds`；未知 key 或下载失败返回 404 `AVATAR_NOT_FOUND`。已保存旧版头像 key 的会话重新登录后会得到新版 key。
 - 测试中通过 monkeypatch `avatar_service.download` 模拟上游，并在每例前后 `clear_cache()`；**不得**在测试中访问真实网络。
 - 前端统一用 `components/UserAvatar.vue`（props：`avatarKey`、`name`、`size`）：有 key 时加载 `/api/v1/avatars/{key}`，无 key 或图片 `error` 时回退为首字母；key 变化会重试。父组件用 class 覆盖颜色/尺寸时选择器需比 `.user-avatar` 更具体（如 `.user-chip .avatar`、`.name-cell .row-avatar`）。已用于顶栏当前用户、排行榜行、Head to Head 选择列表/已选标签/表头、投票分布投票人名单。旧 localStorage 会话没有 `avatar_key`，重新登录后才显示头像。
 
 **隐藏比赛模式：**
-- **Race 模型新增 `is_hidden` 列**：默认为 `True`（新创建比赛默认隐藏），布尔类型。迁移通过 Alembic 新增列并设置 `server_default=false`。该字段仅影响可见性，不影响投票、积分、结算等业务逻辑。
+- **Race 模型 `is_hidden` 列**：ORM 与数据库层统一默认 `True`（`server_default=sa.true()`，新创建比赛默认隐藏），布尔类型。该字段仅影响可见性，不影响投票、积分、结算等业务逻辑。
 - **Service 层 `include_hidden` 参数模式**：`get_races()` 和 `get_race()` 新增 `include_hidden: bool = False` 参数。调用方（端点层）根据当前用户是否为管理员传递该参数。非管理员且 `include_hidden=False` 时，`is_hidden=True` 的比赛从查询结果中排除。
 - **端点 `PATCH /{race_id}/toggle-hidden`**：管理员专用端点，切换 `is_hidden` 标志。Service 层 `toggle_race_hidden()` 执行 `race.is_hidden = not race.is_hidden` 后 `flush()` + `refresh()`。
 - **错误码模式**：非管理员访问隐藏比赛详情时返回 `404` 但错误码为 `RACE_HIDDEN`（区别于通用的 `NOT_FOUND`），便于前端显示"当前比赛已隐藏"。
@@ -385,12 +384,10 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **删除按钮位置**：比赛详情页底部 admin 操作区（`v-if="isAdmin && !isRaceSettled && resultMode === 'idle'"`），用分隔线与上方操作按钮区分。红色主题样式（`--color-destructive`），hover 反转红底白字。已结算比赛不显示。
 - **删除流程**：点击删除按钮 → 弹出 `ConfirmDeleteModal` 确认弹窗（显示比赛名称）→ 确认后调用 `deleteRace()` API → 成功后 `router.push('/')` 跳转回首页。错误信息显示在按钮下方。
 
-**审计日志与重算模式（Story 3.7）：**
-- **ScoreChangeLog 审计模型模式**：`ScoreChangeLog` 模型（`models/change_log.py`）记录每次积分变更。字段包括 `race_id`（FK CASCADE）、`vote_id`（FK CASCADE）、`user_id`（FK CASCADE——投票者）、`admin_user_id`（FK CASCADE——操作管理员）、`old_points`（首次结算为 NULL）、`new_points`、`created_at`。`Vote` 和 `User` 模型各有反向关系指向此表。
-- **结果重算审计模式**：`result_service.submit_results()` 在重算时：先 `is_resettle = race.status == RaceStatus.SETTLED` 判断是否重算，然后 `old_points_map = {vote.id: vote.points for vote in race.votes}` 捕获旧值，再 `vote.points = None` 清除旧积分，重算后遍历 votes 创建 `ScoreChangeLog` 条目（仅 `old_val != new_val` 时记录）。同一 `flush()` 内完成所有操作确保事务原子性。
-- **Service 层延迟导入模式**：为避免循环导入，`ScoreChangeLog` 在 `result_service.py` 中使用函数内局部导入：`from app.models.change_log import ScoreChangeLog`。此模式适用于服务层需要引用新模型而模型层也引用服务层涉及的模型时的场景。同样 `HorseAutoUpdateLog` 也在 `submit_results()` 内延迟导入。
-- **结算自动更新前走模式**：`result_service.submit_results()` 在同一事务中（同一 `flush()` 前）逐个遍历 `race.race_horses`，按 `race.date >= prev_date` 条件判断是否需要更新前走。直接更新 Horse 表字段并创建 `HorseAutoUpdateLog` 条目（仅字段值实际变化时记录），绕过 `manually_updated_fields` 保护检查。
-- **审计查询端点模式**：`GET /api/v1/races/{race_id}/results/history` 管理员专用端点，返回 `{"race_id": ..., "race_name": ..., "changes": [{"vote_id": ..., "username": ..., "race_id": ..., "old_points": ..., "new_points": ..., "modified_at": ..., "admin_username": ...}]}`。使用 `selectinload(ScoreChangeLog.vote_rel).selectinload(Vote.user)` 链式加载避免 N+1。
+**结算重算与前走更新模式（已移除审计日志表）：**
+- 已移除 `score_change_logs` 表、`horse_auto_update_logs` 表及 `GET /api/v1/races/{race_id}/results/history` 端点。
+- **结果重算模式**：`result_service.submit_results()` 在 `race.status == RaceStatus.SETTLED` 重算时，先将所有 `vote.points = None` 清空，再按新名次重算积分并在同一事务 `flush()` 内原子提交。
+- **结算自动更新前走模式**：`result_service.submit_results()` 在同一事务中遍历 `race.race_horses`，按 `race.date >= prev_date` 条件直接原地更新 `Horse` 表的 `previous_result`、`previous_result_date`、`previous_result_position`。
 
 ---
 
@@ -443,4 +440,4 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Review quarterly for outdated rules
 - Remove rules that become obvious over time
 
-Last Updated: 2026-11-09 (race grade retention, steeplechase grade normalization and G2/JPN1 scoring)
+Last Updated: 2026-11-09 (9-table database schema cleanup, single-table User/invite_code lifecycle, integer Race.distance, HistoricalScore.user_id FK, physical batch deletion on undo, and squashed 001_initial_schema baseline)
