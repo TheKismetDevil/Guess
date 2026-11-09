@@ -62,10 +62,10 @@ function response(config, data) {
   return { config, status: 200, statusText: 'OK', headers: {}, data }
 }
 
-function rejectRequest(config, status, message) {
+function rejectRequest(config, status, message, code) {
   throw new axios.AxiosError(message, 'ERR_BAD_REQUEST', config, null, {
     config, status, statusText: 'Error', headers: {},
-    data: { detail: { message } },
+    data: { detail: { message, code } },
   })
 }
 
@@ -271,7 +271,7 @@ test('expired access token is refreshed from the API envelope and the request su
   assert.equal(window.location.href, '')
 })
 
-for (const scenario of ['missing token', 'empty token', 'rejected refresh', 'rejected retry']) {
+for (const scenario of ['rejected refresh', 'rejected retry']) {
   test(`${scenario} clears the session and redirects without a refresh loop`, { timeout: 2000 }, async () => {
     localStorage.setItem('auth', JSON.stringify({ accessToken: 'expired', refreshToken: 'refresh' }))
     const navigation = new Promise(resolve => {
@@ -279,11 +279,8 @@ for (const scenario of ['missing token', 'empty token', 'rejected refresh', 'rej
     })
     respond = config => {
       if (config.url === '/api/v1/auth/refresh') {
-        if (scenario === 'rejected refresh') rejectRequest(config, 401, 'expired refresh')
-        const data = scenario === 'missing token' ? {} : {
-          access_token: scenario === 'empty token' ? '   ' : 'renewed',
-        }
-        return response(config, { data })
+        if (scenario === 'rejected refresh') rejectRequest(config, 401, 'expired refresh', 'INVALID_REFRESH_TOKEN')
+        return response(config, { data: { access_token: 'renewed' } })
       }
       rejectRequest(config, 401, 'expired')
     }
@@ -324,5 +321,203 @@ for (const [label, previous, target] of [
     assert.equal(vote.votedRaceHorseId.value, expectedMethod === 'delete' ? null : target)
     assert.equal(vote.votedHorseName.value, expectedMethod === 'delete' ? null : `马${target}`)
     assert.equal(vote.errorMessage.value, null)
+  })
+}
+
+function makeJwt(expSeconds) {
+  const encode = obj => Buffer.from(JSON.stringify(obj)).toString('base64url')
+  return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ sub: 'admin', exp: expSeconds })}.sig`
+}
+
+test('proactively refreshes an expired JWT access token before sending requests and deduplicates parallel calls', async () => {
+  const nowSec = Math.floor(Date.now() / 1000)
+  const expiredAccess = makeJwt(nowSec - 60)
+  const validRefresh = makeJwt(nowSec + 7 * 86400)
+  const renewedAccess = makeJwt(nowSec + 1800)
+
+  localStorage.setItem('auth', JSON.stringify({
+    accessToken: expiredAccess,
+    refreshToken: validRefresh,
+    user: { id: 1, username: 'admin', is_admin: true },
+  }))
+
+  respond = config => {
+    if (config.url === '/api/v1/auth/refresh') {
+      assert.equal(JSON.parse(config.data).refresh_token, validRefresh)
+      return new Promise(resolve => setImmediate(() => resolve(response(config, { data: { access_token: renewedAccess } }))))
+    }
+    // Even if the endpoint never returns 401 (like a public endpoint), it must receive the renewed token directly.
+    assert.equal(config.headers.Authorization, `Bearer ${renewedAccess}`)
+    return response(config, { data: config.url })
+  }
+
+  const [racesRes, horsesRes] = await Promise.all([
+    apiClient.get('/races'),
+    apiClient.get('/horses'),
+  ])
+
+  assert.equal(racesRes.data.data, '/races')
+  assert.equal(horsesRes.data.data, '/horses')
+  assert.equal(JSON.parse(localStorage.getItem('auth')).accessToken, renewedAccess)
+  assert.equal(requests.filter(r => r.url === '/api/v1/auth/refresh').length, 1)
+  assert.equal(requests.length, 3)
+  assert.equal(window.location.href, '')
+})
+
+test('expired JWT refresh token clears session and redirects before issuing requests', { timeout: 2000 }, async () => {
+  const nowSec = Math.floor(Date.now() / 1000)
+  localStorage.setItem('auth', JSON.stringify({
+    accessToken: makeJwt(nowSec - 120),
+    refreshToken: makeJwt(nowSec - 10),
+    user: { id: 1, username: 'admin', is_admin: true },
+  }))
+  const navigation = new Promise(resolve => {
+    Object.defineProperty(window.location, 'href', { set: resolve })
+  })
+  respond = config => response(config, { data: 'unexpected' })
+
+  void apiClient.get('/races')
+  assert.equal(await navigation, '/login?session=expired&redirect=%2Fraces%2F1')
+  assert.equal(localStorage.getItem('auth'), null)
+  assert.equal(requests.length, 0)
+})
+
+test('transient network failure during refresh preserves stored session instead of logging out', async () => {
+  const nowSec = Math.floor(Date.now() / 1000)
+  const validRefresh = makeJwt(nowSec + 7 * 86400)
+  localStorage.setItem('auth', JSON.stringify({
+    accessToken: makeJwt(nowSec - 60),
+    refreshToken: validRefresh,
+    user: { id: 1, username: 'admin', is_admin: true },
+  }))
+
+  respond = config => {
+    if (config.url === '/api/v1/auth/refresh') {
+      throw new axios.AxiosError('Network Error', 'ERR_NETWORK', config)
+    }
+    return response(config, { data: 'unexpected' })
+  }
+
+  await assert.rejects(() => apiClient.get('/races'), { message: 'Network Error' })
+  assert.equal(JSON.parse(localStorage.getItem('auth')).refreshToken, validRefresh)
+  assert.equal(window.location.href, '')
+})
+
+for (const proactive of [true, false]) {
+  test(`${proactive ? 'proactive' : 'reactive'} refresh keeps the session after HTTP 503`, async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const stored = JSON.stringify({
+      accessToken: makeJwt(now + (proactive ? -60 : 60)),
+      refreshToken: makeJwt(now + 3600),
+    })
+    localStorage.setItem('auth', stored)
+    respond = config => {
+      if (config.url === '/api/v1/auth/refresh') rejectRequest(config, 503, 'unavailable')
+      rejectRequest(config, 401, 'expired')
+    }
+
+    await assert.rejects(apiClient.get('/races'), { message: 'unavailable' })
+    assert.equal(localStorage.getItem('auth'), stored)
+    assert.equal(window.location.href, '')
+    assert.equal(requests.length, proactive ? 1 : 2)
+  })
+}
+
+test('a malformed refresh response rejects without discarding the session', async () => {
+  const stored = JSON.stringify({ accessToken: 'expired', refreshToken: 'refresh' })
+  localStorage.setItem('auth', stored)
+  respond = config => {
+    if (config.url === '/api/v1/auth/refresh') {
+      return response(config, { data: { access_token: ' ' } })
+    }
+    rejectRequest(config, 401, 'expired')
+  }
+
+  await assert.rejects(apiClient.get('/races'), { message: '刷新令牌响应缺少 access_token' })
+  assert.equal(localStorage.getItem('auth'), stored)
+  assert.equal(window.location.href, '')
+})
+
+for (const switchAccount of [false, true]) {
+  test(`a pending refresh is canceled after ${switchAccount ? 'switching accounts' : 'logout'}`, async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const refreshA = makeJwt(now + 3600)
+    const refreshB = makeJwt(now + 7200)
+    const accessB = makeJwt(now + 600)
+    localStorage.setItem('auth', JSON.stringify({
+      accessToken: makeJwt(now - 60), refreshToken: refreshA, user: { id: 1 },
+    }))
+
+    let finishOldRefresh
+    const oldRefreshStarted = new Promise(resolve => {
+      respond = config => {
+        if (config.url === '/api/v1/auth/refresh') {
+          if (JSON.parse(config.data).refresh_token === refreshA) {
+            return new Promise(finish => {
+              finishOldRefresh = () => finish(response(config, { data: { access_token: 'old' } }))
+              resolve()
+            })
+          }
+          assert.equal(JSON.parse(config.data).refresh_token, refreshB)
+          return response(config, { data: { access_token: accessB } })
+        }
+        assert.equal(config.url, '/new-account')
+        assert.equal(config.headers.Authorization, `Bearer ${accessB}`)
+        return response(config, {})
+      }
+    })
+
+    const canceled = assert.rejects(apiClient.post('/old-account'), axios.isCancel)
+    await oldRefreshStarted
+    localStorage.removeItem('auth')
+    if (switchAccount) {
+      localStorage.setItem('auth', JSON.stringify({
+        accessToken: makeJwt(now - 30), refreshToken: refreshB, user: { id: 2 },
+      }))
+      await apiClient.get('/new-account')
+    }
+    const currentAuth = localStorage.getItem('auth')
+    finishOldRefresh()
+    await canceled
+
+    assert.equal(localStorage.getItem('auth'), currentAuth)
+    assert.equal(window.location.href, '')
+    assert.equal(requests.some(config => config.url === '/old-account'), false)
+  })
+}
+
+for (const failDuringRefresh of [false, true]) {
+  test(`a late 401 from ${failDuringRefresh ? 'refresh' : 'the original request'} cannot affect a new session`, async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const oldAuth = {
+      sessionId: 'old',
+      accessToken: makeJwt(now + (failDuringRefresh ? -60 : 60)),
+      refreshToken: makeJwt(now + 3600),
+    }
+    localStorage.setItem('auth', JSON.stringify(oldAuth))
+    let rejectOldRequest
+    const oldRequestStarted = new Promise(resolve => {
+      respond = config => {
+        assert.equal(config.url, failDuringRefresh ? '/api/v1/auth/refresh' : '/old-account')
+        return new Promise((_, reject) => {
+          rejectOldRequest = () => reject(new axios.AxiosError('expired', 'ERR_BAD_REQUEST', config, null, {
+            config, status: 401, statusText: 'Unauthorized', headers: {},
+            data: { detail: { code: 'INVALID_REFRESH_TOKEN' } },
+          }))
+          resolve()
+        })
+      }
+    })
+
+    const canceled = assert.rejects(apiClient.post('/old-account'), axios.isCancel)
+    await oldRequestStarted
+    const newAuth = JSON.stringify({ ...oldAuth, sessionId: 'new' })
+    localStorage.setItem('auth', newAuth)
+    rejectOldRequest()
+    await canceled
+
+    assert.equal(localStorage.getItem('auth'), newAuth)
+    assert.equal(window.location.href, '')
+    assert.equal(requests.length, 1)
   })
 }

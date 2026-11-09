@@ -198,7 +198,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Do NOT implement dark mode — v1 is light mode only
 - Admin routes are top-level routes (no child layout) — they share `AppLayout` with all other pages. The nav bar has a "管理" dropdown for admin sub-navigation.
 - Do NOT use `!important` globally except in utility classes (`.hidden`, `.mobile-only`, `.desktop-only`), reduced-motion override, and date-input `::-webkit-datetime-edit` shadow DOM hiding (needed to override browser default styles)
-- **Do NOT import `useAuthStore` in `client.ts`** — circular dependency (authStore → api/auth.ts → client.ts). Auth token source of truth is **localStorage**, read by request interceptor. Store's `accessToken` ref is synced via `persistAuth()`/`clearAuth()`/`restoreSession()`. `client.ts` response interceptor attempts silent refresh on 401; if refresh fails or no valid token exists, it redirects to `/login?session=expired` (guest pages excluded) and halts the request so callers don't render generic error banners before navigation.
+- **Do NOT import `useAuthStore` in `client.ts`** because authStore already depends on api/auth.ts and client.ts. The request interceptor reads auth from **localStorage**. Pinia syncs via `persistAuth()`, `clearAuth()`, `restoreSession()`, and the events in `utils/authEvents.ts`. The client proactively refreshes expired or nearly expired access tokens within 5 seconds of expiry and can retry once after a 401. Concurrent refreshes share a request within the same session. Each login gets a new session ID, with the refresh token serving as the identifier for older sessions. A request cancels when its session changes during refresh or before a retry. A refresh failure preserves the session unless the API returns `401 INVALID_REFRESH_TOKEN`. Known expired refresh tokens also clear auth and redirect to `/login?session=expired`. Guest pages and auth endpoints skip the refresh and redirect flow.
 - Do NOT use bare `catch` blocks on async functions — always use `catch (err)` to enable error differentiation. Future stories should follow the async/await + structured error handling pattern.
 - Do NOT duplicate `@keyframes skeleton-shimmer` in component scoped styles — use the global animation from `base.css` instead.
 
@@ -237,7 +237,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **Post-vote eager-load 模式**：`create_or_update_vote()` 在 `flush()` + `refresh()` 后，额外执行一次带 `selectinload(Vote.race_horse_rel)` 的查询以解析马名。端点层不再单独调用 `get_race_votes()`（避免 N+1 和冗余查询）。
 - **Lock 操作模式**：`POST /api/v1/races/{race_id}/lock` 为管理员专用端点（`Depends(get_current_admin)`）。使用否定检查 `if race.status != RaceStatus.VOTING`（而非列举非目标状态）以确保未来状态扩展的健壮性。仅 `voting` 状态可锁定。
 **取消投票端点模式**：`DELETE /api/v1/races/{race_id}/votes` 为已登录用户专用端点。校验比赛处于 `voting` 状态后才能取消，通过 `await db.delete(vote)` + `flush()` 删除投票记录。服务层 `delete_vote()` 封装所有校验逻辑（比赛存在性、比赛状态、投票是否存在）。
-**可选用户依赖模式**：`get_optional_user()` 用于公开端点中可选地展示用户特定数据。与 `get_current_user` 逻辑相同但捕获所有认证错误并返回 `None`（无 token/token 过期/token 无效 → 均返回 `None`）。用于 `list_races` 端点返回当前用户各比赛的 `has_voted` 状态。
+**可选用户依赖模式**：`get_optional_user()` 用于公开端点中可选地展示用户/管理员特定数据（如 `list_races` 的 `has_voted` 与隐藏比赛可见性、`get_race` 的隐藏比赛访问、排行榜比赛列表与 Head to Head）。无 Authorization 头时返回 `None`（游客访问）；**携带了已过期/无效/已删除用户的 Bearer Token 时委托 `get_current_user` 抛出 401**（严禁静默吞掉异常返回 `None`，否则管理员在 access_token 30 分钟过期后会被当成游客返回 200/404，导致隐藏比赛丢失且无法触发前端 401 自动续期）。
 - **编辑比赛防删票保护**：`race_service.update_race()` 在移除马匹时，先查询 `Vote` 表检查被移除的 `race_horse_ids` 是否存在投票。若有投票存在，返回 400 `HORSE_HAS_VOTES` 拒绝操作。此保护覆盖 Story 3.2 中移除的 race_horse_id FK CASCADE 限制（无 DB 级 CASCADE，改由应用层保护）。
 
 **Service & DB patterns:**
@@ -278,7 +278,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
   - **禁止**在 touch 处理器中设置 `document.body.style.overflow = 'hidden'`——该全局状态在 DevTools 模拟或系统 touchcancel 下无法可靠恢复。改用 CSS `touch-action: none` 阻止拖拽期间滚动。
 - **Date input 原生占位文字隐藏模式**：`<input type="date">` 在中文 locale 下浏览器显示 "yyyy/mm/dd" 原生占位文字。解决方案：在 `base.css` 中全局定义 `input[type="date"].is-empty::-webkit-datetime-edit { visibility: hidden !important; }` + `input[type="date"].is-empty:focus::-webkit-datetime-edit { visibility: visible !important; }`，每个 date input 添加 `:class="{ 'is-empty': !modelVar }"` 让 Vue 响应式追踪空值状态。空值未聚焦时隐藏，聚焦或已有值时正常显示。
 - **CSS 变量使用规范**：`variables.css` 中定义的 spacing 变量名称为 `--spacing-{N}`（N×4px，如 `--spacing-1`=4px、`--spacing-2`=8px、`--spacing-3`=12px、`--spacing-4`=16px、`--spacing-5`=20px、`--spacing-6`=24px、`--spacing-8`=32px、`--spacing-10`=40px、`--spacing-12`=48px、`--spacing-16`=64px）。**不存在** `--spacing-20`、`--spacing-24`、`--spacing-32` 等变量，使用这些不存在的变量会导致整个 CSS 声明失效。页面排版错乱时优先检查是否引用了不存在的 spacing 变量。
-- **Auth session expiry handling**：`authStore` 解析 refresh token 的 `exp` 声明并为管理员用户设置 `setTimeout`；到期后清除登录态并跳转到 `/login?session=expired`。`client.ts` 响应拦截器对任何 401（登录/注册/重置页除外）都跳转同一 URL，并中断请求避免页面先显示"加载失败"。`LoginPage.vue` 读取 `route.query.session === 'expired'` 显示"登录状态已过期，请重新登录"。JWT 解析工具位于 `frontend/src/utils/jwt.ts`。
+- **Auth session expiry handling**：`main.ts` 在注册路由前调用 `authStore.restoreSession()` 确保首屏与路由守卫立即拿到登录态。`authStore` 解析 refresh token 的 `exp` 声明设置 `setTimeout`（上限钳制 `2_147_483_647` ms 防 32 位整数溢出），并在窗口 `focus`、页面 `visibilitychange`（处理电脑休眠/后台标签页唤醒）及跨标签页 `storage` 事件时重新同步 `localStorage` 与校验到期；管理员会话到期后清除登录态并跳转到 `/login?session=expired`。`LoginPage.vue` 读取 `route.query.session === 'expired'` 显示"登录状态已过期，请重新登录"。JWT 工具位于 `frontend/src/utils/jwt.ts`，无环状态同步位于 `frontend/src/utils/authEvents.ts`。
 - **滚动条偏移防护模式**：`.scroll-container`（`AppLayout.vue` 桌面+移动端媒体查询）使用 `scrollbar-gutter: stable`——始终预留滚动条空间，防止内容高度跨越滚动阈值时触发水平布局偏移。`html` 添加 `overflow: hidden`（`base.css`）兜底——所有页面内容渲染在 `position: fixed` 的 `.scroll-container` 内，body 级别永不出现滚动条。
 - **Axios 数组参数序列化模式**：axios v1.x 默认将数组参数序列化为 bracket notation（`country[]=日本`），FastAPI `Query(list[str])` 只识别 repeated-key 格式（`country=日本&country=美国`）。在 `client.ts` 的 `axios.create()` 中添加 `paramsSerializer`：数组值用 `forEach` 生成重复 key（`encodeURIComponent(key)=encodeURIComponent(v)`），其他值正常编码。所有通过 `apiClient` 发起的请求自动使用此格式，无需每个调用处手动处理。
 
@@ -443,4 +443,4 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Review quarterly for outdated rules
 - Remove rules that become obvious over time
 
-Last Updated: 2026-11-09 (race grade retention, steeplechase grade normalization and G2/JPN1 scoring)
+Last Updated: 2026-11-09 (proactive token refresh, optional-user 401 expiry propagation and cross-tab/wakeup session sync)

@@ -92,29 +92,14 @@ async def get_current_admin(
 
 
 async def get_optional_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
-    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user),
 ) -> Optional[User]:
-    """Resolve the current user from JWT token without raising errors.
+    """Resolve the current user when a Bearer token is supplied, or None for guests.
 
-    Returns None for any auth error (no token, expired, invalid).
-    Use for public endpoints that optionally show user-specific data.
+    - No token → returns None (guest access on public endpoints)
+    - Valid token → returns full User ORM object
+    - Expired / invalid / unknown-user token → raises 401 (via get_current_user)
+      so authenticated clients trigger silent token refresh or session cleanup
+      instead of silently degrading to guest privileges.
     """
-    if credentials is None:
-        return None
-
-    try:
-        payload = jwt.decode(
-            credentials.credentials,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-        )
-        username: str = payload.get("sub")
-        if username is None:
-            return None
-    except (ExpiredSignatureError, JWTError):
-        return None
-
-    result = await db.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    return user  # None if user not found
+    return current_user
