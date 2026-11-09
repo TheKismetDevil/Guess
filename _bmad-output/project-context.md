@@ -362,7 +362,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 
 **QQ 头像（后端代理）：**
 - 浏览器永远拿不到原始 QQ：接口只返回 `avatar_key`（`avatar_service.avatar_key(qq)` = HMAC(`jwt_secret`, `avatar:{qq}`) 的 64 位 hex）。`LeaderboardEntry`、Head to Head 参与者、`VoteListEntry`、`UserInfo`（登录/注册/重置密码）均带 `avatar_key`。
-- `GET /api/v1/avatars/{avatar_key}`（公开）：在 `users.qq ∪ historical_scores.qq` 中反查 QQ，服务端从 `settings.qq_avatar_url`（默认 `https://q1.qlogo.cn/g?b=qq&nk={qq}&s=100`）下载，仅接受 `image/*` 且 ≤512KB；进程内缓存成功结果 6 小时、失败结果 5 分钟；响应带 `Cache-Control: public, max-age=86400`。未知 key/下载失败返回 404 `AVATAR_NOT_FOUND`。
+- `GET /api/v1/avatars/{avatar_key}`（公开）：在 `users.qq ∪ historical_scores.qq` 中反查 QQ，服务端通过复用的模块级 `httpx.AsyncClient` 连接池（`main.py` lifespan 退出时 `close_client()` 关闭）从 `settings.qq_avatar_url`（默认 `https://q1.qlogo.cn/g?b=qq&nk={qq}&s=100`）下载，并对同一 QQ 的在途请求做合并去重（`_inflight`）；仅接受 `image/*` 且 ≤512KB。进程内缓存成功结果 6 小时（`avatar_cache_seconds=21600`）、非图片/4xx 失败结果 1 分钟（`avatar_failure_cache_seconds=60`）；网络超时/连接异常/上游 5xx 等临时错误**不写失败缓存**以便立即恢复；响应带 `Cache-Control: public, max-age=21600`（跟随 `avatar_cache_seconds`）。未知 key/下载失败返回 404 `AVATAR_NOT_FOUND`。
 - 测试中通过 monkeypatch `avatar_service.download` 模拟上游，并在每例前后 `clear_cache()`；**不得**在测试中访问真实网络。
 - 前端统一用 `components/UserAvatar.vue`（props：`avatarKey`、`name`、`size`）：有 key 时加载 `/api/v1/avatars/{key}`，无 key 或图片 `error` 时回退为首字母；key 变化会重试。父组件用 class 覆盖颜色/尺寸时选择器需比 `.user-avatar` 更具体（如 `.user-chip .avatar`、`.name-cell .row-avatar`）。已用于顶栏当前用户、排行榜行、Head to Head 选择列表/已选标签/表头、投票分布投票人名单。旧 localStorage 会话没有 `avatar_key`，重新登录后才显示头像。
 

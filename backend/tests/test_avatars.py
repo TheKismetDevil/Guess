@@ -1,9 +1,11 @@
-"""QQ avatar proxy: opaque keys, server-side download and caching."""
+"""QQ avatar proxy: opaque keys, shared client pool, deduplication and caching."""
+import asyncio
 from datetime import date
 
 import httpx
 import pytest
 
+from app.core.config import settings
 from app.models.historical_score import HistoricalRace, HistoricalScore
 from app.models.user import User
 from app.services import avatar_service
@@ -18,8 +20,11 @@ def fake_download(monkeypatch):
 
     async def download(url):
         calls.append(url)
+        await asyncio.sleep(0)
         if 'nk=55555' in url:
             raise httpx.ConnectTimeout('timeout')
+        if 'nk=50200' in url:
+            return httpx.Response(502, content=b'bad gateway', headers={'content-type': 'text/plain'})
         if 'nk=66666' in url:
             return httpx.Response(200, content=b'<html>', headers={'content-type': 'text/html'})
         return httpx.Response(200, content=PNG, headers={'content-type': 'image/png'})
@@ -35,6 +40,8 @@ def test_avatar_key_is_stable_opaque_and_hides_qq():
     assert key == avatar_key('12345') != avatar_key('12346')
     assert len(key) == 64 and '12345' not in key
     assert avatar_key(None) is None and avatar_key('') is None
+    assert settings.avatar_failure_cache_seconds == 60
+    assert settings.avatar_cache_seconds == 6 * 60 * 60
 
 
 @pytest.mark.asyncio
@@ -51,21 +58,69 @@ async def test_avatar_endpoint_serves_and_caches_user_and_history_avatars(async_
         assert response.status_code == 200
         assert response.content == PNG
         assert response.headers['content-type'] == 'image/png'
-        assert 'max-age' in response.headers['cache-control']
+        assert response.headers['cache-control'] == f'public, max-age={settings.avatar_cache_seconds}'
     assert fake_download == ['https://q1.qlogo.cn/g?b=qq&nk=12345&s=100', 'https://q1.qlogo.cn/g?b=qq&nk=77777&s=100']
 
 
 @pytest.mark.asyncio
-async def test_unknown_malformed_or_failed_avatars_return_404(async_client, db_session, fake_download):
-    db_session.add_all([User(username='timeout', qq='55555', password_hash='x', invite_code='A'),
-        User(username='html', qq='66666', password_hash='x', invite_code='B')])
+async def test_non_image_cached_briefly_but_transient_errors_not_cached(async_client, db_session, fake_download, monkeypatch):
+    db_session.add_all([
+        User(username='timeout', qq='55555', password_hash='x', invite_code='A'),
+        User(username='badgw', qq='50200', password_hash='x', invite_code='B'),
+        User(username='html', qq='66666', password_hash='x', invite_code='C'),
+    ])
     await db_session.flush()
-    for key in (avatar_key('99999'), 'not-a-key', avatar_key('55555'), avatar_key('66666'), avatar_key('55555')):
+    for key in (avatar_key('99999'), 'not-a-key', avatar_key('66666'), avatar_key('66666')):
         response = await async_client.get(f'/api/v1/avatars/{key}')
         assert response.status_code == 404
         assert response.json()['detail']['code'] == 'AVATAR_NOT_FOUND'
-    # Failures are cached briefly instead of hammering the upstream service.
-    assert fake_download.count('https://q1.qlogo.cn/g?b=qq&nk=55555&s=100') == 1
+    # Non-image upstream response is cached (1 min) instead of hammering upstream.
+    assert fake_download.count('https://q1.qlogo.cn/g?b=qq&nk=66666&s=100') == 1
+
+    # Transient errors (timeout / 5xx) are NOT cached and recover immediately on retry.
+    for qq in ('55555', '50200'):
+        assert (await async_client.get(f'/api/v1/avatars/{avatar_key(qq)}')).status_code == 404
+
+    async def recovered_download(url):
+        fake_download.append(url)
+        return httpx.Response(200, content=PNG, headers={'content-type': 'image/png'})
+
+    monkeypatch.setattr(avatar_service, 'download', recovered_download)
+    for qq in ('55555', '50200'):
+        response = await async_client.get(f'/api/v1/avatars/{avatar_key(qq)}')
+        assert response.status_code == 200
+        assert response.content == PNG
+
+
+@pytest.mark.asyncio
+async def test_concurrent_fetches_for_same_qq_are_deduplicated(monkeypatch):
+    gate = asyncio.Event()
+    calls = []
+
+    async def slow_download(url):
+        calls.append(url)
+        await gate.wait()
+        return httpx.Response(200, content=PNG, headers={'content-type': 'image/png'})
+
+    monkeypatch.setattr(avatar_service, 'download', slow_download)
+    tasks = [asyncio.create_task(avatar_service.fetch_avatar('88888')) for _ in range(5)]
+    await asyncio.sleep(0)
+    gate.set()
+    results = await asyncio.gather(*tasks)
+    assert calls == ['https://q1.qlogo.cn/g?b=qq&nk=88888&s=100']
+    assert results == [(PNG, 'image/png')] * 5
+
+
+@pytest.mark.asyncio
+async def test_shared_http_client_reused_and_closed():
+    c1 = avatar_service._get_client()
+    c2 = avatar_service._get_client()
+    assert c1 is c2 and not c1.is_closed
+    await avatar_service.close_client()
+    assert c1.is_closed
+    c3 = avatar_service._get_client()
+    assert c3 is not c1 and not c3.is_closed
+    await avatar_service.close_client()
 
 
 @pytest.mark.asyncio
