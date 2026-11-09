@@ -943,10 +943,10 @@ class TestRaceHorseManagement:
         await db_session.rollback()
 
     @pytest.mark.asyncio
-    async def test_update_race_horse(self, db_session: AsyncSession):
-        """Update per-race jockey for a race horse."""
+    async def test_update_race_horse(self, db_session: AsyncSession, async_client: AsyncClient):
+        """PATCH only changes the jockey when the field is present."""
         from app.schemas.race import RaceCreate
-        from app.services.race_service import create_race, update_race_horse
+        from app.services.race_service import create_race
 
         h1 = await _create_horse(db_session, SAMPLE_HORSE)
         h2 = await _create_horse(db_session, SAMPLE_HORSE_2)
@@ -956,14 +956,18 @@ class TestRaceHorseManagement:
             RaceCreate(name="UpdateHorse", date=date(2026, 8, 1), **_make_race_kwargs(), horse_ids=[h1.id, h2.id]),
         )
         rh = race.race_horses[0]
+        url = f"/api/v1/races/{race.id}/horses/{rh.id}"
+        app.dependency_overrides[get_current_admin] = override_get_admin
 
-        updated = await update_race_horse(db_session, race.id, rh.id, jockey="Y. Kawada")
-        assert updated.jockey == "Y. Kawada"
-
-        cleared = await update_race_horse(db_session, race.id, rh.id, jockey=None)
-        assert cleared.jockey is None
-
-        await db_session.rollback()
+        for payload, expected in (
+            ({"jockey": "Y. Kawada"}, "Y. Kawada"),
+            ({}, "Y. Kawada"),
+            ({"weight": 480}, "Y. Kawada"),
+            ({"jockey": None}, None),
+        ):
+            response = await async_client.patch(url, json=payload)
+            assert response.status_code == 200
+            assert response.json()["data"]["jockey"] == expected
 
     @pytest.mark.asyncio
     async def test_update_gate_order(self, db_session: AsyncSession):

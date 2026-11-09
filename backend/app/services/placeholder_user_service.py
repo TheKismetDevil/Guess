@@ -71,7 +71,13 @@ async def _create_missing_placeholders(db, people: dict[str, str]) -> int:
     existing_users = {
         u.qq: u
         for u in (
-            await db.execute(select(User).where(User.qq.in_(people)))
+            await db.execute(
+                select(User)
+                .where(User.qq.in_(people))
+                .order_by(User.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
         ).scalars()
     }
     to_create: list[tuple[str, str]] = []

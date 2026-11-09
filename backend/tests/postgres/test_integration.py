@@ -181,6 +181,38 @@ async def test_orphan_cleanup_cannot_delete_concurrently_activated_user(pg_datab
         assert activated.password_hash is not None
 
 
+async def test_placeholder_promotion_waits_for_concurrent_registration(pg_database):
+    _, sessions, migrate = pg_database
+    await migrate()
+    async with sessions() as db:
+        db.add(User(qq='12345', invite_code='REG12345', is_admin=False))
+        await db.commit()
+
+    async with sessions() as importer, sessions() as registration:
+        pending = await importer.scalar(select(User).where(User.qq == '12345'))
+        assert pending.username is None
+        await auth_service.register(registration, RegisterRequest(
+            username='registered', password='secret123', qq=pending.qq, invite_code=pending.invite_code,
+        ))
+        content = workbook()
+        task = asyncio.create_task(import_workbook(importer, content))
+        try:
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.2)
+            await registration.commit()
+            result = await asyncio.wait_for(task, timeout=10)
+            assert result['placeholder_users'] == 0
+            await importer.commit()
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async with sessions() as db:
+        assert (await db.scalar(select(User.username).where(User.qq == '12345'))) == 'registered'
+        assert [(entry.username, entry.total_points) for entry in await leaderboard_service.get_leaderboard(db)] == [('registered', -5)]
+
+
 async def test_postgres_import_diff_update_and_undo(pg_database):
     _, sessions, migrate = pg_database
     await migrate()

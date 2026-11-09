@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.horse import Horse
 from app.models.race import Race, RaceHorse, RaceStatus
-from app.schemas.race import CustomScoring, RaceCreate, RaceUpdate
+from app.schemas.race import CustomScoring, RaceCreate, RaceHorseUpdate, RaceUpdate
 
 
 async def get_races(
@@ -414,7 +414,7 @@ async def update_race_horse(
     db: AsyncSession,
     race_id: int,
     race_horse_id: int,
-    jockey: str | None = None,
+    data: RaceHorseUpdate,
 ) -> RaceHorse:
     """Update per-race jockey for a single RaceHorse."""
     race = await get_race(db, race_id)
@@ -444,10 +444,10 @@ async def update_race_horse(
             },
         )
 
-    race_horse.jockey = jockey
-
-    await db.flush()
-    await db.refresh(race_horse)
+    if "jockey" in data.model_fields_set:
+        race_horse.jockey = data.jockey
+        await db.flush()
+        await db.refresh(race_horse)
     return race_horse
 
 

@@ -228,7 +228,7 @@ async def update_race_horse(
 ):
     """Update per-race jockey for a race horse. Admin only."""
     race_horse = await race_service.update_race_horse(
-        db, race_id, race_horse_id, data.jockey
+        db, race_id, race_horse_id, data
     )
     return {"data": _build_horse_dict(race_horse)}
 

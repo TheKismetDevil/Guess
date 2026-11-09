@@ -316,11 +316,27 @@ async def import_workbook(
     ]
 
     people: dict[str, str] = {}
+    previous_qqs = set()
     for item in active_items:
-        _, _, incoming = states[item["name"]]
+        _, before, incoming = states[item["name"]]
+        if before is not None:
+            previous_qqs.update(score["qq"] for score in before["scores"])
         for score in incoming["scores"]:
             qq = score["qq"]
             people[qq] = participant_names.get(qq, "")
+
+    # Keep names in undo data only, so name changes don't affect import comparisons.
+    previous_names = {}
+    if previous_qqs:
+        rows = await db.execute(
+            select(User.qq, User.username).where(
+                User.qq.in_(previous_qqs),
+                User.is_admin.is_(False),
+                User.password_hash.is_(None),
+                User.username.isnot(None),
+            )
+        )
+        previous_names = dict(rows.all())
 
     # Ensure every participant QQ has a User row first so HistoricalScore can bind user_id
     placeholder_users = await ensure_placeholders(db, people)
@@ -364,7 +380,14 @@ async def import_workbook(
                 HistoricalImportChange(
                     batch_id=batch.id,
                     race_id=race.id,
-                    before=before,
+                    before={
+                        **before,
+                        "scores": [
+                            {**score, "display_name": previous_names[score["qq"]]}
+                            if score["qq"] in previous_names else score
+                            for score in before["scores"]
+                        ],
+                    },
                     after=incoming,
                 )
             )

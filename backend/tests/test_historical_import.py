@@ -264,6 +264,22 @@ async def test_diff_shows_removed_and_added_scores_and_zero_is_not_blank(db_sess
     assert [(s['qq'], s['points']) for s in await history.race_scores(db_session, item['race_id'])] == [('99999', 20)]
 
 
+async def test_undo_restores_placeholder_name_after_removing_last_scores(db_session):
+    await import_workbook(db_session, workbook())
+
+    def replace_participant(w):
+        w['历史得分']['A2'] = '新用户'
+        w['历史得分']['B2'] = '99999'
+
+    result = await reviewed_import(db_session, changed_workbook(replace_participant))
+    user = await db_session.scalar(select(User).where(User.qq == '12345'))
+    assert user.username is None
+
+    await history.undo_batch(db_session, result['batch_id'])
+    assert user.username == '旧名'
+    assert [(entry.username, entry.total_points) for entry in await get_leaderboard(db_session)] == [('旧名', -5)]
+
+
 async def test_partial_decisions_do_not_apply_any_updates(db_session):
     await import_workbook(db_session, workbook())
     def change(w):
