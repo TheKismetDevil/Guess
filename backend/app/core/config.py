@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # QQ avatars (fetched server-side so QQ numbers are never sent to browsers)
     qq_avatar_url: str = "https://q1.qlogo.cn/g?b=qq&nk={qq}&s=100"
-    avatar_cache_seconds: int = 6 * 60 * 60
+    avatar_cache_seconds: int = 3 * 24 * 60 * 60
     avatar_failure_cache_seconds: int = 60
     avatar_fetch_timeout_seconds: float = 5.0
 

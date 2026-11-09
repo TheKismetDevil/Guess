@@ -41,7 +41,7 @@ def test_avatar_key_is_stable_opaque_and_hides_qq():
     assert len(key) == 64 and '12345' not in key
     assert avatar_key(None) is None and avatar_key('') is None
     assert settings.avatar_failure_cache_seconds == 60
-    assert settings.avatar_cache_seconds == 6 * 60 * 60
+    assert settings.avatar_cache_seconds == 3 * 24 * 60 * 60
 
 
 @pytest.mark.asyncio
