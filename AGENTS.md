@@ -11,6 +11,7 @@
 - 远端：`origin` 为主仓库 `TheKismetDevil/Guess`，`alzawok` 为协作者 fork。推送使用 `git push -u origin <分支名>`，PR 目标分支为 `origin/master`。
 - 本机未安装 GitHub CLI（`gh`），推送后告知用户在 GitHub 页面创建 PR，并附上 PR 标题和描述草稿。
 - 未经用户确认，不要 force push、改写 `master` 历史或删除他人分支。
+- 在受限沙箱中，git 写操作（新建分支、commit、push）会因无法写入 `.git` 失败，后端异步 pytest 用例也可能挂起；遇到时改为在沙箱外执行该条命令。
 - 新功能涉及的新约定须同步更新 `_bmad-output/project-context.md`，与代码一起提交到同一 PR。
 
 ## 开启本地测试
