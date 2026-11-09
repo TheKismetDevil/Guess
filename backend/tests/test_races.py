@@ -434,6 +434,11 @@ class TestRaceAPI:
             })
             assert resp.status_code == 200
             assert resp.json()["data"]["name"] == "NewName"
+            for dropped_grade in ("G3", "JPN2"):
+                bad_patch = await client.patch(f"/api/v1/races/{race_id}", json={"race_grade": dropped_grade})
+                assert bad_patch.status_code == 422
+            ok_patch = await client.patch(f"/api/v1/races/{race_id}", json={"race_grade": "其他"})
+            assert ok_patch.status_code == 200 and ok_patch.json()["data"]["race_grade"] == "其他"
 
         app.dependency_overrides.clear()
 
@@ -596,7 +601,10 @@ class TestRaceAPI:
             })
             assert resp.status_code == 422
 
-            # Single horse
+            # Single horse (and dropped race_grade values G3 / JPN2)
+            for dropped_grade in ("G3", "JPN2"):
+                dropped_resp = await client.post("/api/v1/races", json=_make_race_json("Test", "2026-06-15", race_grade=dropped_grade, horse_ids=[1, 2]))
+                assert dropped_resp.status_code == 422
             resp = await client.post("/api/v1/races", json=_make_race_json(
                 "Test", "2026-06-15",
                 horse_ids=[1],

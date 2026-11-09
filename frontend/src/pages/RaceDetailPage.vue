@@ -89,10 +89,7 @@ const horsePositions = computed<Record<string, number> | undefined>(() => {
 const isAdmin = computed(() => authStore.isAdmin)
 
 const canEnterJiggleMode = computed(() =>
-  isAdmin.value && (
-    isRaceVoting.value ||
-    ((isRaceLocked.value || isRaceSettled.value) && resultMode.value === 'ranking')
-  ),
+  isAdmin.value && isRaceVoting.value,
 )
 
 function toggleJiggleMode() {
@@ -250,7 +247,7 @@ function handleDeleteDrop(e: DragEvent) {
 }
 
 async function confirmDeleteHorse() {
-  if (!race.value || !deleteTarget.value || deleting.value) return
+  if (!race.value || !isRaceVoting.value || !deleteTarget.value || deleting.value) return
   deleting.value = true
   try {
     await removeRaceHorse(raceId, deleteTarget.value.raceHorseId)
@@ -1089,7 +1086,7 @@ onUnmounted(() => {
                 :position="isRaceSettled ? (horse.position ?? null) : null"
                 :editable="isAdmin && isRaceVoting"
                 :draggable="(isAdmin && isRaceVoting) ? true : undefined"
-                :show-delete-button="isJiggleMode"
+                :show-delete-button="isJiggleMode && isRaceVoting"
                 :is-jiggling="isJiggleMode"
                 :class="{ 'voted-horse-locked': (isRaceLocked || isRaceSettled) && votedHorseName && horse.snapshot_data.name === votedHorseName }"
                 @vote-toggle="handleCardClick(horse)"
@@ -1181,12 +1178,10 @@ onUnmounted(() => {
                 :position="index + 1"
                 :draggable="true"
                 :is-dnf="false"
-                :show-delete-button="isJiggleMode"
                 :is-jiggling="isJiggleMode"
                 @drag-start="handleResultDragStart(index, 'active')"
                 @drag-end="handleResultDragEnd"
                 @refresh="handleRefresh(horse)"
-                @delete-click="deleteTarget = { raceHorseId: horse.race_horse_id, name: horse.snapshot_data.name ?? '未知' }; showDeleteConfirm = true"
               />
             </div>
           </div>
@@ -1225,12 +1220,10 @@ onUnmounted(() => {
                 :field-size="bracketFieldSize"
                 :draggable="true"
                 :is-dnf="true"
-                :show-delete-button="isJiggleMode"
                 :is-jiggling="isJiggleMode"
                 @drag-start="handleResultDragStart(index, 'dnf')"
                 @drag-end="handleResultDragEnd"
                 @refresh="handleRefresh(horse)"
-                @delete-click="deleteTarget = { raceHorseId: horse.race_horse_id, name: horse.snapshot_data.name ?? '未知' }; showDeleteConfirm = true"
               />
             </div>
           </div>
@@ -1969,9 +1962,8 @@ onUnmounted(() => {
 }
 
 .result-drag-item {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
+  width: 100%;
+  transition: transform var(--duration-fast) ease;
 }
 
 .dnf-zone {
@@ -2026,6 +2018,7 @@ onUnmounted(() => {
 }
 
 .dnf-item {
+  width: 100%;
   cursor: pointer;
   margin-bottom: var(--spacing-3);
   animation: rise-in var(--duration-base) var(--ease-out);

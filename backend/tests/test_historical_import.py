@@ -42,10 +42,11 @@ async def test_import_filters_and_dedup(db_session):
     assert (entries[0].total_points, entries[0].races_participated) == (0, 1)
     assert len((await import_workbook(db_session, workbook()))['skipped_races']) == 2
     grades = {r.name: r.race_grade for r in (await db_session.execute(select(HistoricalRace))).scalars()}
-    assert grades == {'测试赛': 'JPN1', '障碍赛': '自定义'}
+    assert grades == {'测试赛': 'JPN1', '障碍赛': '其他'}
     # Registered users stay listed with zero participation when no race matches.
     assert [(e.total_points, e.races_participated) for e in await get_leaderboard(db_session, race_grade=['J·G1'])] == [(0, 0)]
-    assert (await get_leaderboard(db_session, race_grade=['自定义']))[0].total_points == -5
+    assert [(e.total_points, e.races_participated) for e in await get_leaderboard(db_session, race_grade=['自定义'])] == [(0, 0)]
+    assert (await get_leaderboard(db_session, race_grade=['其他']))[0].total_points == -5
     assert len((await db_session.execute(select(HistoricalScore))).scalars().all()) == 2
 
 
@@ -400,5 +401,23 @@ async def test_api_import_options_match_preview_and_commit(async_client):
     result = await async_client.post(base, content=content, params={
         'skip_empty': 'false', 'skip_identical': 'false', 'preview_token': preview['preview_token']})
     assert result.status_code == 200 and result.json()['data']['imported_races'] == 2
+
+
+async def test_grade_normalization_for_steeplechase_and_dropped_grades(db_session):
+    w = Workbook()
+    s = w.active
+    s.title = '历史得分'
+    s.append(['用户名', 'QQ号', '三级赛', '地方二级', '障碍自定义', '草地自定义'])
+    s.append(['选手', '12345', 3, 1, 5, 10])
+    r = w.create_sheet('赛事资料')
+    r.append(['比赛名称', '比赛日期', '年龄范围', '性别限定', '比赛等级', '国家或地区', '场地', '距离（米）', '参赛马匹数'])
+    r.append(['三级赛', '2026-02-01', '4+岁', '无', 'G3', '日本', '草地', 1800, 12])
+    r.append(['地方二级', '2026-02-02', '4+岁', '无', 'Jpn2', '日本', '泥地', 2000, 10])
+    r.append(['障碍自定义', '2026-02-03', '4+岁', '无', '自定义', '日本', '障碍', 3900, 9])
+    r.append(['草地自定义', '2026-02-04', '3+岁', '无', '自定义', '日本', '草地', 2400, 8])
+    out = BytesIO(); w.save(out)
+    await import_workbook(db_session, out.getvalue())
+    grades = {race.name: race.race_grade for race in (await db_session.execute(select(HistoricalRace))).scalars()}
+    assert grades == {'三级赛': '其他', '地方二级': '其他', '障碍自定义': '其他', '草地自定义': '自定义'}
 
 

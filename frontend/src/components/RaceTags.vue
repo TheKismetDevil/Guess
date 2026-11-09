@@ -23,9 +23,7 @@ const gradeClass = computed(() => {
   switch (props.race.race_grade) {
     case 'G1': return 'grade-g1'
     case 'G2': return 'grade-g2'
-    case 'G3': return 'grade-g3'
-    case 'JPN1':
-    case 'JPN2': return 'grade-jpn'
+    case 'JPN1': return 'grade-jpn'
     case '自定义': return 'grade-custom'
     default: return ''
   }
@@ -79,12 +77,6 @@ const surfaceClass = computed(() => {
   border-color: transparent;
 }
 
-.grade-g3 {
-  color: #FFFFFF;
-  background: var(--gradient-bronze);
-  border-color: transparent;
-}
-
 .grade-jpn {
   color: #FFFFFF;
   background: linear-gradient(135deg, #3A9C8F, #23756B);
@@ -109,7 +101,7 @@ const surfaceClass = computed(() => {
 .surface-aw .surface-dot { background: #6C7FA0; }
 
 /* Translucent chips for the race-detail hero banner */
-.on-dark .ui-chip:not(.grade-g1):not(.grade-g2):not(.grade-g3):not(.grade-jpn) {
+.on-dark .ui-chip:not(.grade-g1):not(.grade-g2):not(.grade-jpn) {
   color: rgba(255, 255, 255, 0.92);
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.22);
