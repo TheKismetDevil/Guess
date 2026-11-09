@@ -412,7 +412,6 @@ function handleContextMenu(e: MouseEvent) {
           </svg>
         </button>
         <button
-          v-if="!showDeleteButton"
           type="button"
           class="icon-btn icon-btn-danger desktop-only"
           :title="`从比赛中移除「${safeData.name}」`"
@@ -428,7 +427,7 @@ function handleContextMenu(e: MouseEvent) {
 
     <button
       v-if="showDeleteButton && !isDnf"
-      class="delete-card-btn"
+      class="delete-card-btn mobile-only"
       aria-label="删除此马匹"
       @click.stop="emit('deleteClick')"
     >✕</button>
@@ -469,6 +468,9 @@ function handleContextMenu(e: MouseEvent) {
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas: "badge main side";
   align-items: stretch;
+  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 88px;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-hairline);
@@ -1089,19 +1091,16 @@ function handleContextMenu(e: MouseEvent) {
   100% { transform: rotate(0deg) translate(0, 0); }
 }
 
-.horse-detail-card.is-jiggling {
-  touch-action: none;
-  overflow: visible;
-}
-
-/* Clip the leading badge to the card corners while overflow is visible */
-.horse-detail-card.is-jiggling .lead-badge {
-  border-radius: var(--rounded-lg) 0 0 var(--rounded-lg);
-}
-
 @media (max-width: 767px) {
   .horse-detail-card.is-jiggling {
+    touch-action: none;
+    overflow: visible;
     animation: jiggle 0.3s ease-in-out infinite alternate;
+  }
+
+  /* Clip the leading badge to the card corners while overflow is visible */
+  .horse-detail-card.is-jiggling .lead-badge {
+    border-radius: var(--rounded-lg) 0 0 var(--rounded-lg);
   }
 }
 
@@ -1137,6 +1136,12 @@ function handleContextMenu(e: MouseEvent) {
 .delete-card-btn:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+@media (min-width: 768px) {
+  .delete-card-btn {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
