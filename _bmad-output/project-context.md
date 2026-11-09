@@ -257,7 +257,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - 新增 `derive_scoring_grade(age_range: str, race_grade: str) -> str` 将 5-tag 映射到 4 种评分模式：`"2岁"+G1→YOUNG_G1`、非G1/非自定义→G2_JPN1、自定义→CUSTOM、其他→G1。结算时调用 `calculate_score(grade=derive_scoring_grade(...))`。
 - G1 扣分使用**绝对位置转换公式**：`penalty_position = total_horses + offset + 1`，其中 `offset` 为负数（-1=最后一名，-2=倒数第二名，依此类推）。
 - G1 扣分分档：≥8匹扣末3名(-10/-5/-1)、7匹扣末2名(-5/-1)、6匹扣末1名(-1)、≤5匹无扣分。
-- G2_JPN1：正分 +5/+3/+1（仅前三名），不扣分。
+- G2_JPN1：正分 +5/+3/+1（仅前三名），不扣分。迁移 021 按已存名次重算适用该规则的已结算投票积分，并将实际变动写入积分变更记录。
 - YOUNG_G1：正分同 G1（+10/+5/+3/+2/+1），不扣分。
 - CUSTOM：从 `custom_scoring` 字典读取 `positive_scores`（list[int]，1-indexed）和可选的 `penalty_rules`（list[dict]，position 为负偏移，points 为扣分值）。若某名次同时有正序积分和扣分，则**加分优先**（豁免扣分），与 G1 原则一致——一个名次不会既加分又扣分。
 - DNF/退赛：`position <= 0` 返回 0 分。

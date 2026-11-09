@@ -24,34 +24,83 @@ pytestmark = pytest.mark.postgres
 
 
 async def test_all_migrations_and_legacy_backfill_preserve_scores(pg_database):
-    engine, _, migrate = pg_database
+    engine, sessions, migrate = pg_database
     await migrate('016')
     async with engine.begin() as conn:
         await conn.execute(text("""INSERT INTO historical_races
             (id,name,date,age_range,sex_restriction,race_grade,country,surface,distance,horse_count)
-            VALUES (1,'legacy','2026-01-01','3岁','无','G1','日本','草地',1600,12),
-                   (2,'steeple','2026-01-02','4+岁','无','自定义','日本','障碍',4100,10),
-                   (3,'dropped','2026-01-03','3岁','无','G3','日本','草地',1800,14)"""))
-        await conn.execute(text("INSERT INTO historical_scores(race_id,qq,display_name,points) VALUES (1,'12345','legacy user',0)"))
+            VALUES (1,'测试赛','2026-01-01','3岁','牡牝限','g1','日本','草地',2000,0),
+                   (2,'steeple','2026-01-02','4+岁','无','自定义','日本','障碍（草地）',4100,10),
+                   (3,'dropped','2026-01-03','3岁','无','G3','日本','草地',1800,14),
+                   (4,'legacy alias','2026-01-04','3岁','无','G-2','日本','草地',1600,12)"""))
+        await conn.execute(text("INSERT INTO historical_scores(race_id,qq,display_name,points) VALUES (1,'12345','旧名',0)"))
     await migrate('018')
     async with engine.begin() as conn:
         batch_id = (await conn.execute(text('SELECT id FROM historical_import_batches'))).scalar_one()
         await conn.execute(text("""INSERT INTO historical_import_changes(batch_id, race_id, before, after)
             VALUES (:b, 2,
-                '{"metadata":{"surface":"障碍","race_grade":"自定义"},"scores":[]}',
-                '{"metadata":{"surface":"草地","race_grade":"G3"},"scores":[]}')"""), {'b': batch_id})
+                '{"metadata":{"surface":"障碍（草地）","race_grade":"自定义"},"scores":[]}',
+                '{"metadata":{"surface":"草地","race_grade":"G3"},"scores":[]}'),
+                (:b, 4,
+                '{"metadata":{"surface":"草地","race_grade":"g1"},"scores":[]}',
+                '{"metadata":{"surface":"草地","race_grade":"G-2"},"scores":[{"points": 4}]}')"""), {'b': batch_id})
     await migrate()
     async with engine.connect() as conn:
         assert (await conn.execute(text('SELECT version_num FROM alembic_version'))).scalar_one() == '021'
         assert (await conn.execute(text('SELECT points FROM historical_scores'))).scalar_one() == 0
-        assert (await conn.execute(text('SELECT count(*) FROM historical_races WHERE import_batch_id IS NOT NULL'))).scalar_one() == 3
-        assert (await conn.execute(text('SELECT imported_races, imported_scores, updated_races FROM historical_import_batches'))).one() == (3, 1, 0)
-        assert (await conn.execute(text('SELECT id, race_grade FROM historical_races ORDER BY id'))).all() == [
-            (1, 'G1'), (2, '其他'), (3, '其他'),
+        assert (await conn.execute(text('SELECT count(*) FROM historical_races WHERE import_batch_id IS NOT NULL'))).scalar_one() == 4
+        assert (await conn.execute(text('SELECT imported_races, imported_scores, updated_races FROM historical_import_batches'))).one() == (4, 1, 0)
+        assert (await conn.execute(text('SELECT id, race_grade, surface FROM historical_races ORDER BY id'))).all() == [
+            (1, 'G1', '草地'), (2, '其他', '障碍'), (3, '其他', '草地'), (4, 'G2', '草地'),
         ]
-        change_row = (await conn.execute(text('SELECT before, after FROM historical_import_changes'))).one()
-        assert change_row[0]['metadata']['race_grade'] == '其他'
-        assert change_row[1]['metadata']['race_grade'] == '其他'
+        steeple, alias = (await conn.execute(text('SELECT before, after FROM historical_import_changes ORDER BY race_id'))).all()
+        assert steeple[0]['metadata'] == {'surface': '障碍', 'race_grade': '其他'}
+        assert steeple[1]['metadata']['race_grade'] == '其他'
+        assert [state['metadata']['race_grade'] for state in alias] == ['G1', 'G2']
+        assert alias[1]['scores'] == [{'points': 4}]
+    async with sessions() as db:
+        w = load_workbook(BytesIO(workbook()))
+        w['赛事资料']['E2'] = 'g1'
+        out = BytesIO(); w.save(out); w.close()
+        preview = await preview_workbook(db, out.getvalue())
+        assert next(r for r in preview['races'] if r['name'] == '测试赛')['action'] == 'skip'
+
+
+async def test_grade_migration_recalculates_only_affected_settled_votes(pg_database):
+    _, sessions, migrate = pg_database
+    await migrate('020')
+    async with sessions() as db:
+        user = User(username='player', qq='12345', password_hash='test', invite_code='PLAYER', is_admin=False)
+        horse = Horse(name='test horse')
+        db.add_all([user, horse])
+        await db.flush()
+        cases = [
+            ('G2', RaceStatus.SETTLED, 2, 4),
+            ('JPN1', RaceStatus.SETTLED, 4, 2),
+            ('G3', RaceStatus.SETTLED, 3, 3),
+            ('其他', RaceStatus.SETTLED, 0, 0),
+            ('G1', RaceStatus.SETTLED, 2, 5),
+            ('自定义', RaceStatus.SETTLED, 2, 7),
+            ('G2', RaceStatus.LOCKED, None, None),
+        ]
+        for index, (grade, status, position, points) in enumerate(cases):
+            race = Race(name=f'race {index}', date=date(2026, 1, 1), age_range='3岁', sex_restriction='无',
+                race_grade=grade, country='日本', surface='草地', distance='1600m', creator_id=user.id, status=status)
+            db.add(race)
+            await db.flush()
+            rh = RaceHorse(race_id=race.id, horse_id=horse.id, snapshot_data={'name': horse.name}, position=position)
+            db.add(rh)
+            await db.flush()
+            db.add(Vote(user_id=user.id, race_id=race.id, race_horse_id=rh.id, points=points))
+        await db.commit()
+
+    await migrate()
+    async with sessions() as db:
+        assert (await db.scalars(select(Vote.points).order_by(Vote.id))).all() == [3, 0, 1, 0, 5, 7, None]
+        assert (await db.execute(text('SELECT old_points, new_points, admin_user_id FROM score_change_logs ORDER BY vote_id'))).all() == [
+            (4, 3, None), (2, 0, None), (3, 1, None),
+        ]
+        assert (await leaderboard_service.get_leaderboard(db))[0].total_points == 16
 
 
 async def test_qq_migration_preserves_legacy_accounts_and_blocks_new_duplicates(pg_database):
