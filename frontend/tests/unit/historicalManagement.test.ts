@@ -16,6 +16,8 @@ const preview = (): ImportPreview => ({ participants: 1, imported_races: 0, impo
     differences: [{ kind: 'score', qq: '12345', before: { qq: '12345', points: 0 }, after: { qq: '12345', points: 8 } }] }],
 })
 
+const batch = { id: 1, filename: '旧成绩.xlsx', created_at: '2026-01-01T00:00:00Z', race_count: 2, score_count: 10, updated_races: 0 }
+
 beforeEach(() => {
   vi.mocked(api.getHistoryBatches).mockResolvedValue([])
   vi.mocked(api.previewHistory).mockResolvedValue(preview())
@@ -87,14 +89,52 @@ describe('historical import page user flow', () => {
   })
 
   it('requires explicit confirmation before undoing a batch', async () => {
-    vi.mocked(api.getHistoryBatches).mockResolvedValue([{ id: 1, filename: '旧成绩.xlsx', created_at: '2026-01-01T00:00:00Z', race_count: 2, score_count: 10, updated_races: 0 }])
+    vi.mocked(api.getHistoryBatches).mockResolvedValueOnce([batch])
     vi.mocked(api.undoHistoryBatch).mockResolvedValue({ removed_races: 2, removed_scores: 10 })
     const wrapper = await mountPage()
+    expect(wrapper.get('.ui-page-eyebrow').text()).toBe('Admin')
+    expect(wrapper.get('.ui-page-title').text()).toBe('历史成绩管理')
     await wrapper.findAll('button').find(button => button.text() === '撤销批次')!.trigger('click')
     expect(api.undoHistoryBatch).not.toHaveBeenCalled()
     expect(wrapper.get('.undo-confirm').text()).toContain('10 条成绩')
     await wrapper.findAll('button').find(button => button.text() === '确认撤销')!.trigger('click')
     await flushPromises()
     expect(api.undoHistoryBatch).toHaveBeenCalledWith(1)
+    expect(wrapper.get('.ui-banner--success').text()).toContain('已删除该导入批次')
+    expect(wrapper.get('dialog').element.open).toBe(false)
+    expect(document.activeElement).toBe(wrapper.get('.batches-section h2').element)
+  })
+
+  it('keeps undo conflicts in the modal and restores focus when dismissed', async () => {
+    vi.mocked(api.getHistoryBatches).mockResolvedValueOnce([batch])
+    let rejectUndo!: (reason: unknown) => void
+    const request = new Promise<never>((_, reject) => { rejectUndo = reject })
+    vi.mocked(api.undoHistoryBatch).mockReturnValueOnce(request)
+    const wrapper = await mountPage()
+    const trigger = wrapper.get('button.row-btn-danger')
+    await trigger.trigger('click')
+    const dialog = wrapper.get('dialog')
+    const [cancel, confirm] = dialog.findAll('button')
+    expect(dialog.element.open).toBe(true)
+    expect(document.activeElement).toBe(cancel!.element)
+
+    await confirm!.trigger('click')
+    expect(cancel!.element.disabled).toBe(true)
+    await dialog.trigger('cancel')
+    await dialog.trigger('click')
+    expect(dialog.element.open).toBe(true)
+
+    const conflict = '该批次涉及后续导入更新，请先撤销后续批次。'
+    rejectUndo({ isAxiosError: true, response: { status: 409, data: { detail: { message: conflict } } } })
+    await flushPromises()
+    expect(dialog.get('[role="alert"]').text()).toBe(conflict)
+    expect(wrapper.find('.ui-banner--error').exists()).toBe(false)
+    expect(document.activeElement).toBe(cancel!.element)
+
+    await dialog.trigger('cancel')
+    expect(dialog.element.open).toBe(false)
+    expect(document.activeElement).toBe(trigger.element)
+    await trigger.trigger('click')
+    expect(dialog.find('[role="alert"]').exists()).toBe(false)
   })
 })
