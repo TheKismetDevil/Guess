@@ -132,6 +132,30 @@ describe('InviteCodeInput segmented boxes across auth pages', () => {
       'A', 'B', '1', '2', 'C', 'D', '3', '4',
     ])
 
+    const lastBox = boxes[7]!.element as HTMLInputElement
+    expect(document.activeElement).toBe(lastBox)
+    expect(lastBox.selectionStart).toBe(1)
+    expect(lastBox.selectionEnd).toBe(1)
+
+    // Pasting again while already focused on the last box also keeps caret collapsed (no text selection)
+    await boxes[7]!.trigger('paste', {
+      clipboardData: { getData: () => 'ef56gh78' },
+    })
+    await flushPromises()
+    expect(boxes.map(b => (b.element as HTMLInputElement).value)).toEqual([
+      'E', 'F', '5', '6', 'G', 'H', '7', '8',
+    ])
+    expect(lastBox.selectionStart).toBe(1)
+    expect(lastBox.selectionEnd).toBe(1)
+
+    // Restore original code via paste for form submission assertion
+    await boxes[0]!.trigger('paste', {
+      clipboardData: { getData: () => ' ab12-cd34 ' },
+    })
+    await flushPromises()
+    expect(lastBox.selectionStart).toBe(1)
+    expect(lastBox.selectionEnd).toBe(1)
+
     await wrapper.get('#reset-new-password').setValue('newpass123')
     await wrapper.get('#reset-confirm-password').setValue('newpass123')
     await wrapper.get('form').trigger('submit')

@@ -54,13 +54,23 @@ function commitSlots() {
   emit('input')
 }
 
+function placeCaretEnd(el: HTMLInputElement | null | undefined) {
+  if (!el) return
+  const len = el.value.length
+  try {
+    el.setSelectionRange(len, len)
+  } catch {
+    // Ignore if selection range is unsupported
+  }
+}
+
 function focusSlot(index: number) {
   const clamped = Math.max(0, Math.min(index, props.length - 1))
   nextTick(() => {
     const el = inputRefs.value[clamped]
     if (!el) return
     el.focus()
-    el.select()
+    placeCaretEnd(el)
   })
 }
 
@@ -103,7 +113,11 @@ function processRawInput(index: number, raw: string, typedData?: string | null) 
   if (clean.length === 1) {
     slots.value[index] = clean
     commitSlots()
-    if (index < props.length - 1) focusSlot(index + 1)
+    if (index < props.length - 1) {
+      focusSlot(index + 1)
+    } else {
+      placeCaretEnd(inputRefs.value[index])
+    }
     return
   }
 
@@ -111,14 +125,26 @@ function processRawInput(index: number, raw: string, typedData?: string | null) 
   if (singleTyped.length === 1 && clean.length === 2 && prevChar) {
     slots.value[index] = singleTyped
     commitSlots()
-    if (index < props.length - 1) focusSlot(index + 1)
+    if (index < props.length - 1) {
+      focusSlot(index + 1)
+    } else {
+      placeCaretEnd(inputRefs.value[index])
+    }
     return
   }
   if (!typedData && clean.length === 2 && prevChar && (clean[0] === prevChar || clean[1] === prevChar)) {
     const replacement = clean[0] === prevChar ? clean[1]! : clean[0]!
     slots.value[index] = replacement
     commitSlots()
-    if (index < props.length - 1) focusSlot(index + 1)
+    if (index < props.length - 1) {
+      focusSlot(index + 1)
+    } else {
+      placeCaretEnd(inputRefs.value[index])
+    }
+    return
+  }
+  if (prevChar && singleTyped.length >= 2) {
+    distributeFrom(index, singleTyped)
     return
   }
 
@@ -190,11 +216,11 @@ function handleClick(index: number) {
       return
     }
   }
-  inputRefs.value[index]?.select()
+  placeCaretEnd(inputRefs.value[index])
 }
 
 function handleFocus(index: number) {
-  inputRefs.value[index]?.select()
+  placeCaretEnd(inputRefs.value[index])
 }
 </script>
 
@@ -271,6 +297,7 @@ function handleFocus(index: number) {
 .code-box.is-filled {
   background: var(--color-surface-raised);
   border-color: var(--color-border-strong);
+  caret-color: transparent;
 }
 
 .code-box:hover:not(:disabled):not(:focus) {
