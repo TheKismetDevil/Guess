@@ -89,8 +89,10 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null
 // Origin-related
 function handleOriginSelect(e: Event) {
   const val = (e.target as HTMLSelectElement).value
+  modalError.value = ''
   if (val === '__new__') {
     isAddingCountry.value = true
+    formNewCountry.value = ''
     newCountryHemisphere.value = 'north'
     formOrigin.value = ''
     formHemisphere.value = ''
@@ -104,13 +106,24 @@ const togglingHemisphere = ref(false)
 
 async function handleToggleHemisphere() {
   if (!formOrigin.value || togglingHemisphere.value) return
+  const origin = formOrigin.value
   togglingHemisphere.value = true
   try {
-    const result = await toggleHemisphere(formOrigin.value)
+    const result = await toggleHemisphere(origin)
     formHemisphere.value = result.new_hemisphere
-    countryHemispheres.value[formOrigin.value] = result.new_hemisphere
-  } catch {
-    // silent
+    countryHemispheres.value[origin] = result.new_hemisphere
+    for (const h of horses.value) {
+      if (h.origin === origin) {
+        h.hemisphere = result.new_hemisphere
+      }
+    }
+    if (editingHorse.value && editingHorse.value.origin === origin) {
+      editingHorse.value = { ...editingHorse.value, hemisphere: result.new_hemisphere }
+    }
+  } catch (err: unknown) {
+    const response = (err as Record<string, unknown>)?.response as Record<string, unknown> | undefined
+    const detail = response?.data as Record<string, unknown> | undefined
+    modalError.value = ((detail?.detail as Record<string, unknown> | undefined)?.message as string) || '切换半球失败，请重试'
   } finally {
     togglingHemisphere.value = false
   }
@@ -119,25 +132,41 @@ async function handleToggleHemisphere() {
 function confirmNewCountry() {
   const name = formNewCountry.value.trim()
   if (!name) return
+  if (sortedCountries.value.includes(name)) {
+    const existingHs = countryHemispheres.value[name]
+    if (existingHs && existingHs !== newCountryHemisphere.value) {
+      const label = existingHs === 'south' ? '南半球' : '北半球'
+      modalError.value = `出生国「${name}」已存在且绑定为${label}，如需更改请在选择后点击「切换半球」`
+      return
+    }
+    modalError.value = ''
+    formOrigin.value = name
+    formHemisphere.value = existingHs || newCountryHemisphere.value
+    isAddingCountry.value = false
+    formNewCountry.value = ''
+    return
+  }
+  modalError.value = ''
   formOrigin.value = name
   formHemisphere.value = newCountryHemisphere.value
   isAddingCountry.value = false
-  countryHemispheres.value[name] = newCountryHemisphere.value
-  // Note: sortedCountries is NOT modified here — the new country only
-  // appears as a temporary option in the select until the form is saved.
-  // After save, refreshCountryList() adds it to sortedCountries.
+  formNewCountry.value = ''
+  // Keep the new country and hemisphere in the form until save succeeds.
 }
 
 function cancelNewCountry() {
   isAddingCountry.value = false
-  formOrigin.value = ''
-  formHemisphere.value = ''
+  formNewCountry.value = ''
+  modalError.value = ''
+  formOrigin.value = editingHorse.value?.origin || ''
+  formHemisphere.value = editingHorse.value?.hemisphere || countryHemispheres.value[formOrigin.value] || ''
 }
 
 function handleLocationSelect(e: Event) {
   const val = (e.target as HTMLSelectElement).value
   if (val === '__new__') {
     isAddingLocation.value = true
+    formNewLocation.value = ''
     formLocation.value = ''
   } else {
     formLocation.value = val
@@ -148,13 +177,15 @@ function confirmNewLocation() {
   const name = formNewLocation.value.trim()
   if (!name) return
   formLocation.value = name
+  formNewLocation.value = ''
   isAddingLocation.value = false
   // Not added to sortedLocations until saved. Shows as temporary option.
 }
 
 function cancelNewLocation() {
   isAddingLocation.value = false
-  formLocation.value = ''
+  formNewLocation.value = ''
+  formLocation.value = editingHorse.value?.location || ''
 }
 
 async function loadHorses(options: { quiet?: boolean } = {}) {
@@ -192,7 +223,8 @@ async function loadHorses(options: { quiet?: boolean } = {}) {
       .map(s => s.location)
     // An empty result for a search is "no hits", not an empty library
     pageState.value = data.length === 0 && !search.value ? 'empty' : 'success'
-  } catch {
+  } catch (err) {
+    void err
     pageState.value = 'error'
   } finally {
     searching.value = false
@@ -221,8 +253,8 @@ async function refreshCountryList() {
         return a.location.localeCompare(b.location)
       })
       .map(s => s.location)
-  } catch {
-    // silently ignore
+  } catch (err) {
+    void err
   }
 }
 
@@ -329,8 +361,12 @@ function handleSave() {
         if (name !== editingHorse.value.name) payload.name = name
         if (formSex.value !== (editingHorse.value.sex || '')) payload.sex = formSex.value || null
         if (formBirthYear.value !== editingHorse.value.birth_year) payload.birth_year = formBirthYear.value
-        if (formOrigin.value !== (editingHorse.value.origin || '')) payload.origin = formOrigin.value || null
-        if (formHemisphere.value !== (editingHorse.value.hemisphere || '')) payload.hemisphere = formHemisphere.value || null
+        if (formOrigin.value !== (editingHorse.value.origin || '')) {
+          payload.origin = formOrigin.value || null
+          payload.hemisphere = formHemisphere.value || null
+        } else if (formHemisphere.value !== (editingHorse.value.hemisphere || '')) {
+          payload.hemisphere = formHemisphere.value || null
+        }
         if (formLocation.value !== (editingHorse.value.location || '')) payload.location = formLocation.value || null
         if (formSire.value !== (editingHorse.value.sire || '')) payload.sire = formSire.value || null
         if (formDamsire.value !== (editingHorse.value.damsire || '')) payload.damsire = formDamsire.value || null
@@ -617,8 +653,8 @@ onUnmounted(() => {
                     <option v-if="formOrigin && !sortedCountries.includes(formOrigin)" :value="formOrigin">{{ formOrigin }} (未保存)</option>
                     <option v-for="c in sortedCountries" :key="c" :value="c">{{ c }}</option>
                   </select>
-                  <div v-if="formHemisphere" class="hemisphere-row">
-                    <span class="hemisphere-badge">{{ formHemisphere === 'north' ? '北半球' : '南半球' }}</span>
+                  <div v-if="formOrigin && (formHemisphere || sortedCountries.includes(formOrigin))" class="hemisphere-row">
+                    <span class="hemisphere-badge">{{ !formHemisphere ? '未设置半球' : formHemisphere === 'south' ? '南半球' : '北半球' }}</span>
                     <button
                       v-if="sortedCountries.includes(formOrigin)"
                       type="button"

@@ -23,9 +23,22 @@ class HorseCreate(BaseModel):
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
+        v = v.strip()
         if len(v) < 1 or len(v) > 100:
             raise ValueError("马匹名称长度需在 1-100 个字符之间")
-        return v.strip()
+        return v
+
+    @field_validator("origin", "location")
+    @classmethod
+    def validate_place(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 100:
+            raise ValueError("长度不能超过 100 个字符")
+        return v
 
     @field_validator("sex")
     @classmethod
@@ -61,9 +74,22 @@ class HorseUpdate(BaseModel):
     @classmethod
     def validate_name(cls, v: str | None) -> str | None:
         if v is not None:
+            v = v.strip()
             if len(v) < 1 or len(v) > 100:
                 raise ValueError("马匹名称长度需在 1-100 个字符之间")
-            return v.strip()
+            return v
+        return v
+
+    @field_validator("origin", "location")
+    @classmethod
+    def validate_place(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 100:
+            raise ValueError("长度不能超过 100 个字符")
         return v
 
     @field_validator("sex")
