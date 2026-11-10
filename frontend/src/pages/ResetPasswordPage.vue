@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { resetPassword } from '@/api/auth'
 import AuthShell from '@/components/AuthShell.vue'
+import InviteCodeInput from '@/components/InviteCodeInput.vue'
 
 const router = useRouter()
 
@@ -58,7 +59,7 @@ async function handleSubmit() {
 
   try {
     await resetPassword({
-      invite_code: inviteCode.value.trim(),
+      invite_code: inviteCode.value.trim().toUpperCase(),
       new_password: newPassword.value.trim(),
     })
     router.push('/login?reset=success')
@@ -102,16 +103,12 @@ async function handleSubmit() {
       </div>
 
       <div class="ui-field">
-        <label class="ui-label" for="reset-invite-code">邀请码（注册时绑定的）</label>
-        <input
+        <label id="reset-invite-code-label" class="ui-label" for="reset-invite-code">邀请码（注册时绑定的 8 位码）</label>
+        <InviteCodeInput
           id="reset-invite-code"
           v-model="inviteCode"
-          class="ui-input code-input"
-          type="text"
-          placeholder="请输入 8 位邀请码"
-          maxlength="8"
-          :aria-invalid="!!error"
-          autocomplete="off"
+          :invalid="!!error"
+          aria-labelledby="reset-invite-code-label"
           @input="clearError"
         />
       </div>
@@ -164,13 +161,6 @@ async function handleSubmit() {
 </template>
 
 <style scoped>
-.code-input {
-  font-family: var(--font-display);
-  font-size: 20px;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-}
-
 .submit-btn {
   margin-top: var(--spacing-2);
   min-height: 48px;

@@ -31,11 +31,47 @@ async def _add_historical_scores(
 
 
 @pytest.mark.asyncio
-async def test_hidden_race_name_is_not_exposed(async_client, leaderboard_data):
-    response = await async_client.get('/api/v1/leaderboard/races')
-    assert response.status_code == 200
-    assert len(response.json()['data']) == 2
-    assert all(r['name'] == '未公开比赛' and r['date'] == '' and r['id'] is None for r in response.json()['data'])
+async def test_hidden_races_excluded_from_leaderboard_and_races_until_unhidden(
+    async_client: AsyncClient, db_session: AsyncSession, leaderboard_data: dict
+):
+    from app.services.race_service import toggle_race_hidden
+
+    race1 = leaderboard_data["race1"]
+    race2 = leaderboard_data["race2"]
+
+    # Hide race1 (4 horses, user1 +10, user2 +5); only race2 (user1 +10, user2 +5) remains public
+    await toggle_race_hidden(db_session, race1.id)
+    assert race1.is_hidden is True
+
+    races_resp = (await async_client.get("/api/v1/leaderboard/races")).json()["data"]
+    assert [r["name"] for r in races_resp] == ["Race 2"]
+
+    ranking = (await async_client.get("/api/v1/leaderboard")).json()["data"]
+    u1 = next(e for e in ranking if e["username"] == "user1")
+    u2 = next(e for e in ranking if e["username"] == "user2")
+    assert (u1["total_points"], u1["races_participated"], u1["avg_points"]) == (10, 1, 10.0)
+    assert (u2["total_points"], u2["races_participated"], u2["avg_points"]) == (5, 1, 5.0)
+
+    # Filtered query matching only hidden race1 must also exclude it
+    filtered = (
+        await async_client.get(
+            "/api/v1/leaderboard",
+            params={"horse_count_min": 4, "horse_count_max": 4},
+        )
+    ).json()["data"]
+    assert all(e["races_participated"] == 0 and e["total_points"] == 0 for e in filtered)
+
+    # Hide race2 as well -> zero public scored races, average mode threshold is 0 (0 races)
+    await toggle_race_hidden(db_session, race2.id)
+    assert (await async_client.get("/api/v1/leaderboard/races")).json()["data"] == []
+    all_hidden_ranking = (await async_client.get("/api/v1/leaderboard")).json()["data"]
+    assert all(e["races_participated"] == 0 and e["total_points"] == 0 for e in all_hidden_ranking)
+
+    # Unhide race1 -> its settled scores immediately count again without re-settling
+    await toggle_race_hidden(db_session, race1.id)
+    unhidden_ranking = (await async_client.get("/api/v1/leaderboard")).json()["data"]
+    u1_after = next(e for e in unhidden_ranking if e["username"] == "user1")
+    assert (u1_after["total_points"], u1_after["races_participated"]) == (10, 1)
 
 
 @pytest.mark.asyncio
@@ -65,7 +101,7 @@ async def leaderboard_data(db_session: AsyncSession) -> dict:
     race1 = Race(
         name="Race 1", date=date(2026, 6, 1),
         age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
-        status=RaceStatus.LOCKED,
+        status=RaceStatus.LOCKED, is_hidden=False,
     )
     db_session.add(race1)
     await db_session.flush()
@@ -98,7 +134,7 @@ async def leaderboard_data(db_session: AsyncSession) -> dict:
     race2 = Race(
         name="Race 2", date=date(2026, 6, 8),
         age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
-        status=RaceStatus.LOCKED,
+        status=RaceStatus.LOCKED, is_hidden=False,
     )
     db_session.add(race2)
     await db_session.flush()
@@ -201,7 +237,7 @@ async def test_leaderboard_tie_breaking(db_session: AsyncSession):
     race1 = Race(
         name="Race 1", date=date(2026, 6, 15),
         age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
-        status=RaceStatus.LOCKED,
+        status=RaceStatus.LOCKED, is_hidden=False,
     )
     db_session.add(race1)
     await db_session.flush()
@@ -235,7 +271,7 @@ async def test_leaderboard_tie_breaking(db_session: AsyncSession):
     race2 = Race(
         name="Race 2", date=date(2026, 6, 16),
         age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
-        status=RaceStatus.LOCKED,
+        status=RaceStatus.LOCKED, is_hidden=False,
     )
     db_session.add(race2)
     await db_session.flush()
@@ -284,7 +320,7 @@ async def test_leaderboard_dnf_handling(db_session: AsyncSession):
     race = Race(
         name="DNF Race", date=date(2026, 6, 15),
         age_range="其他", sex_restriction="无", race_grade="G1", country="日本", distance=1200, surface="草地",
-        status=RaceStatus.LOCKED,
+        status=RaceStatus.LOCKED, is_hidden=False,
     )
     db_session.add(race)
     await db_session.flush()

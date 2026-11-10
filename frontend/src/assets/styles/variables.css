@@ -59,6 +59,7 @@
   /* Font Families */
   --font-display: 'Barlow Condensed', system-ui, sans-serif;
   --font-body: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', 'Cascadia Mono', Consolas, 'Liberation Mono', Menlo, monospace;
 
   /* Size Hierarchy */
   --text-display: 36px;       /* 600 weight, 1.15 line-height */

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import AuthShell from '@/components/AuthShell.vue'
+import InviteCodeInput from '@/components/InviteCodeInput.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -161,16 +162,14 @@ async function handleSubmit() {
 
       <!-- Invite code -->
       <div class="ui-field">
-        <label class="ui-label" for="invite-code">邀请码</label>
-        <input
+        <label id="invite-code-label" class="ui-label" for="invite-code">邀请码（8 位）</label>
+        <InviteCodeInput
           id="invite-code"
           v-model="inviteCode"
-          type="text"
-          placeholder="请输入邀请码"
-          maxlength="8"
-          class="ui-input invite-input"
-          :aria-invalid="!!fieldErrors.inviteCode"
+          :invalid="!!fieldErrors.inviteCode"
+          aria-labelledby="invite-code-label"
           :aria-describedby="fieldErrors.inviteCode ? 'invite-code-error' : undefined"
+          @input="fieldErrors.inviteCode = ''"
         />
         <p v-if="fieldErrors.inviteCode" :id="'invite-code-error'" class="ui-field-error" role="alert">
           {{ fieldErrors.inviteCode }}
@@ -196,13 +195,6 @@ async function handleSubmit() {
 </template>
 
 <style scoped>
-.invite-input {
-  font-family: var(--font-display);
-  font-size: 20px;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-}
-
 .submit-btn {
   margin-top: var(--spacing-2);
   min-height: 48px;

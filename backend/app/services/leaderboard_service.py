@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.historical_score import HistoricalRace, HistoricalScore
-from app.models.race import Race, RaceHorse
+from app.models.race import Race, RaceHorse, RaceStatus
 from app.models.user import User
 from app.models.vote import Vote
 from app.schemas.leaderboard import LeaderboardEntry
@@ -53,18 +53,24 @@ async def get_leaderboard(
         for v in filters.values()
     )
 
-    if has_filters:
-        vote_query = (
-            select(
-                Vote.user_id,
-                func.sum(Vote.points).label("points"),
-                func.count(func.distinct(Vote.race_id)).label("races"),
-            )
-            .join(Race, Vote.race_id == Race.id)
-            .where(Vote.points.isnot(None))
+    vote_query = (
+        select(
+            Vote.user_id,
+            func.sum(Vote.points).label("points"),
+            func.count(func.distinct(Vote.race_id)).label("races"),
         )
-        vote_query = filter_race_query(vote_query, Race, filters).group_by(Vote.user_id)
+        .join(Race, Vote.race_id == Race.id)
+        .where(
+            Vote.points.isnot(None),
+            Race.status == RaceStatus.SETTLED,
+            Race.is_hidden == False,
+        )
+    )
+    if has_filters:
+        vote_query = filter_race_query(vote_query, Race, filters)
+    vote_query = vote_query.group_by(Vote.user_id)
 
+    if has_filters:
         history_query = (
             select(
                 HistoricalScore.user_id,
@@ -77,15 +83,6 @@ async def get_leaderboard(
             history_query, HistoricalRace, filters
         ).group_by(HistoricalScore.user_id)
     else:
-        vote_query = (
-            select(
-                Vote.user_id,
-                func.sum(Vote.points).label("points"),
-                func.count(func.distinct(Vote.race_id)).label("races"),
-            )
-            .where(Vote.points.isnot(None))
-            .group_by(Vote.user_id)
-        )
         history_query = select(
             HistoricalScore.user_id,
             func.sum(HistoricalScore.points).label("points"),
@@ -182,14 +179,16 @@ def filter_race_query(query, model, filters):
 
 
 async def get_matching_races(
-    db: AsyncSession, include_hidden: bool = False, **filters
+    db: AsyncSession, **filters
 ) -> list[dict]:
-    """List races with scores using the same inclusive conditions as the ranking."""
+    """List public races with scores using the same inclusive conditions as the ranking."""
     live = select(Race).where(
+        Race.status == RaceStatus.SETTLED,
+        Race.is_hidden == False,
         select(Vote.id)
         .join(User, User.id == Vote.user_id)
         .where(Vote.race_id == Race.id, Vote.points.isnot(None), User.is_admin == False)
-        .exists()
+        .exists(),
     )
     historical = select(HistoricalRace).where(
         select(HistoricalScore.id)
@@ -206,9 +205,9 @@ async def get_matching_races(
     historical_races = (await db.execute(historical)).scalars().all()
     items = [
         {
-            "id": r.id if include_hidden or not r.is_hidden else None,
-            "name": r.name if include_hidden or not r.is_hidden else "未公开比赛",
-            "date": r.date.isoformat() if include_hidden or not r.is_hidden else "",
+            "id": r.id,
+            "name": r.name,
+            "date": r.date.isoformat(),
             "source": "live",
         }
         for r in live_races

@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useRouter, useRoute, type LocationQueryValue } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import AuthShell from '@/components/AuthShell.vue'
+import InviteCodeInput from '@/components/InviteCodeInput.vue'
 
 type LoginMode = 'username' | 'qq' | 'invite_code'
 
@@ -220,16 +221,12 @@ async function handleSubmit() {
         <!-- Invite code mode -->
         <div v-else key="invite_code">
           <div class="ui-field">
-            <label class="ui-label" for="login-invite-code">邀请码</label>
-            <input
+            <label id="login-invite-code-label" class="ui-label" for="login-invite-code">邀请码（8 位）</label>
+            <InviteCodeInput
               id="login-invite-code"
               v-model="inviteCode"
-              class="ui-input code-input"
-              type="text"
-              placeholder="请输入 8 位邀请码"
-              maxlength="8"
-              :aria-invalid="!!errorMessage"
-              autocomplete="off"
+              :invalid="!!errorMessage"
+              aria-labelledby="login-invite-code-label"
               @input="clearError"
             />
           </div>
@@ -298,13 +295,6 @@ async function handleSubmit() {
 
 .tab-btn.active {
   color: var(--color-primary);
-}
-
-.code-input {
-  font-family: var(--font-display);
-  font-size: 20px;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
 }
 
 .submit-btn {

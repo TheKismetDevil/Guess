@@ -5,7 +5,6 @@ from collections import defaultdict
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
-from app.core.security import opaque_key
 from app.models.historical_score import HistoricalRace, HistoricalScore
 from app.models.race import Race, RaceStatus
 from app.models.user import User
@@ -46,7 +45,7 @@ async def get_participants(db):
     ]
 
 
-async def compare(db, participant_ids: list[str], include_hidden=False, **filters):
+async def compare(db, participant_ids: list[str], **filters):
     if len(participant_ids) < 2 or len(set(participant_ids)) != len(participant_ids):
         raise HTTPException(
             400,
@@ -79,7 +78,7 @@ async def compare(db, participant_ids: list[str], include_hidden=False, **filter
         )
         query = select(model).where(model.id.in_(common))
         if model is Race:
-            query = query.where(Race.status == RaceStatus.SETTLED)
+            query = query.where(Race.status == RaceStatus.SETTLED, Race.is_hidden == False)
         races = (await db.execute(filter_race_query(query, model, filters))).scalars().all()
         if not races:
             continue
@@ -95,15 +94,12 @@ async def compare(db, participant_ids: list[str], include_hidden=False, **filter
         for race_id, participant, score in points:
             by_race[race_id][participant] = score
         for race in races:
-            hidden = model is Race and race.is_hidden and not include_hidden
             items.append(
                 dict(
-                    key=opaque_key("hidden", str(race.id))
-                    if hidden
-                    else f"{source}:{race.id}",
-                    id=race.id if source == "live" and not hidden else None,
-                    name="未公开比赛" if hidden else race.name,
-                    date="" if hidden else race.date.isoformat(),
+                    key=f"{source}:{race.id}",
+                    id=race.id if source == "live" else None,
+                    name=race.name,
+                    date=race.date.isoformat(),
                     source=source,
                     scores=[by_race[race.id][identity] for identity in identities],
                 )
