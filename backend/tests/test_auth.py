@@ -739,8 +739,6 @@ class TestOptionalUserTokenExpiry:
         for url in [
             "/api/v1/races",
             f"/api/v1/races/{hidden_race.id}",
-            "/api/v1/leaderboard/races",
-            "/api/v1/leaderboard/head-to-head?participant_id=user:1&participant_id=user:2",
         ]:
             resp = await async_client.get(url, headers=expired_headers)
             assert resp.status_code == 401, f"Expected 401 for {url}, got {resp.status_code}"

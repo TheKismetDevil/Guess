@@ -2,8 +2,6 @@ from datetime import date
 
 from sqlalchemy import select
 
-from app.api.deps import get_optional_user
-from app.main import app
 from app.models.historical_score import HistoricalRace, HistoricalScore
 from app.models.race import RaceHorse, RaceStatus
 from app.models.user import User
@@ -57,7 +55,7 @@ async def test_live_and_history_are_combined_and_registered_qq_is_linked(db_sess
     await historical_race(db_session, '历史共同赛', date(2026, 7, 1), [('10002', '旧昵称', 0), ('10003', '旧昵称2', -5)])
     await historical_race(db_session, '仅一人参加', date(2026, 7, 2), [('10002', '旧昵称', 20)])
     ids = [user_key(data['user1']), user_key(data['user2'])]
-    result = await compare(db_session, ids, include_hidden=True)
+    result = await compare(db_session, ids)
     assert len(result['races']) == 3
     assert result['races'][0]['name'] == '历史共同赛'
     assert result['races'][0]['scores'] == [0, -5]
@@ -103,15 +101,19 @@ async def test_admin_qq_is_not_merged_and_unregistered_history_stays_separate(db
     assert (await compare(db_session, [user_key(leaderboard_data['user1']), historic['id']]))['races'] == []
 
 
-async def test_hidden_race_metadata_respects_viewer_permission(async_client, leaderboard_data):
+async def test_hidden_settled_races_are_excluded_from_head_to_head(async_client, db_session, leaderboard_data):
+    from app.services.race_service import toggle_race_hidden
+
     ids = [user_key(leaderboard_data['user1']), user_key(leaderboard_data['user2'])]
-    public = await async_client.get('/api/v1/leaderboard/head-to-head', params={'participant_id': ids})
-    assert public.status_code == 200
-    assert all(r['name'] == '未公开比赛' and r['date'] == '' and r['id'] is None and r['key'].startswith('hidden:') for r in public.json()['data']['races'])
-    app.dependency_overrides[get_optional_user] = lambda: leaderboard_data['admin']
-    admin = await async_client.get('/api/v1/leaderboard/head-to-head', params={'participant_id': ids, 'date_from': '2026-06-01', 'date_to': '2026-06-01', 'horse_count_min': 4, 'horse_count_max': 4})
-    assert admin.status_code == 200
-    assert [r['name'] for r in admin.json()['data']['races']] == ['Race 1']
+    await toggle_race_hidden(db_session, leaderboard_data['race1'].id)
+
+    resp = await async_client.get('/api/v1/leaderboard/head-to-head', params={'participant_id': ids})
+    assert resp.status_code == 200
+    assert [r['name'] for r in resp.json()['data']['races']] == ['Race 2']
+
+    await toggle_race_hidden(db_session, leaderboard_data['race1'].id)
+    restored = await async_client.get('/api/v1/leaderboard/head-to-head', params={'participant_id': ids})
+    assert [r['name'] for r in restored.json()['data']['races']] == ['Race 2', 'Race 1']
 
 
 async def test_public_api_rejects_invalid_selection_and_dates(async_client, leaderboard_data):
