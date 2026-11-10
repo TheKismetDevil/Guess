@@ -416,7 +416,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - **列表逐项入场**：给条目加 `.ui-stagger` + `:style="{ '--i': index }"`，但 class 只能在首次出现时挂上——用 `useRevealOnce()` 的 `revealing` 控制（`reveal(count)` 后自动在动画结束时撤掉）。原因：CSS 动画在节点被重新插入时会重播，常驻 class 会让拖拽排序（DOM 移动）时卡片反复闪入。
 - `useCountUp(source, duration)` / `CountUpNumber.vue`：数字缓动递增，`prefers-reduced-motion` 时直接跳到终值。
 - `base.css` 的 reduced-motion 全局规则同时把 `animation-delay` / `transition-delay` 置 0，避免逐项入场在关闭动效时仍有延迟空白。
-- 复用组件：`RaceTags.vue`（6 个标签 chip；G1 金、G2 银、JPN1 青、自定义紫，场地带色点；`on-dark` 用于详情页深色横幅）、`HiddenToggleButton.vue`（管理员眼睛按钮，内部 `@click.stop`）、`BrandMark.vue`（金色马蹄铁 logo，渐变 id 用 `useId()` 保证每个实例唯一）、`AuthShell.vue`（登录/注册/重置密码共用外壳，表单控件用 `ui-*`）。
+- 复用组件：`RaceTags.vue`（6 个标签 chip；G1 金、G2 银、JPN1 青、自定义紫，场地带色点；`on-dark` 用于详情页深色横幅）、`HiddenToggleButton.vue`（管理员眼睛按钮，内部 `@click.stop`）、`BrandMark.vue`（金色马蹄铁 logo，渐变 id 用 `useId()` 保证每个实例唯一）、`AuthShell.vue`（登录/注册/重置密码共用外壳，表单控件用 `ui-*`）、`InviteCodeInput.vue`（登录/注册/重置密码共用的 8 格手机验证码式邀请码输入组件，`defineModel<string>`，使用等宽字体 `--font-mono`，支持逐格自动跳焦、Backspace 回删、单格覆盖、任意格粘贴 8 位码与 IME 合成保护）。用户管理页（`InviteCodeTable.vue`）的邀请码展示（`.code-text`、`.created-code`）同样统一使用 `--font-mono` 等宽字体。
 - 选项常量统一在 `src/constants/raceOptions.ts`（`AGE_RANGE_OPTIONS` 等），首页创建弹窗与排行榜筛选共用，新增选项只改这一处。
 - 比赛详情页顶部为品牌色横幅（`.race-hero`，按状态切换配色），`RaceHeaderEditor` 的标题与 ✎ 按钮颜色为 `inherit` 以适配深色背景。
 - `HorseDetailCard.vue` 新增可选 `fieldSize` prop：传入出走头数时右侧闸位块按 **JRA 枠番配色**（`utils/gateBracket.ts`，≤8 头一马一枠，9–18 头按外枠优先补位）。详情页只对 `country === '日本'` 的比赛传入。左侧名次块 1/2/3 名为金/银/铜渐变。

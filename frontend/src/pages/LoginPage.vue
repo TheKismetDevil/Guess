@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useRouter, useRoute, type LocationQueryValue } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import AuthShell from '@/components/AuthShell.vue'
+import InviteCodeInput from '@/components/InviteCodeInput.vue'
 
 type LoginMode = 'username' | 'qq' | 'invite_code'
 
@@ -220,16 +221,11 @@ async function handleSubmit() {
         <!-- Invite code mode -->
         <div v-else key="invite_code">
           <div class="ui-field">
-            <label class="ui-label" for="login-invite-code">邀请码</label>
-            <input
+            <label class="ui-label" for="login-invite-code">邀请码（8 位）</label>
+            <InviteCodeInput
               id="login-invite-code"
               v-model="inviteCode"
-              class="ui-input"
-              type="text"
-              placeholder="请输入 8 位邀请码"
-              maxlength="8"
-              :aria-invalid="!!errorMessage"
-              autocomplete="off"
+              :invalid="!!errorMessage"
               @input="clearError"
             />
           </div>

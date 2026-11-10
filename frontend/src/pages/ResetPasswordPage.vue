@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { resetPassword } from '@/api/auth'
 import AuthShell from '@/components/AuthShell.vue'
+import InviteCodeInput from '@/components/InviteCodeInput.vue'
 
 const router = useRouter()
 
@@ -102,16 +103,11 @@ async function handleSubmit() {
       </div>
 
       <div class="ui-field">
-        <label class="ui-label" for="reset-invite-code">邀请码（注册时绑定的）</label>
-        <input
+        <label class="ui-label" for="reset-invite-code">邀请码（注册时绑定的 8 位码）</label>
+        <InviteCodeInput
           id="reset-invite-code"
           v-model="inviteCode"
-          class="ui-input"
-          type="text"
-          placeholder="请输入 8 位邀请码"
-          maxlength="8"
-          :aria-invalid="!!error"
-          autocomplete="off"
+          :invalid="!!error"
           @input="clearError"
         />
       </div>

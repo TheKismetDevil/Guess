@@ -429,11 +429,17 @@ onUnmounted(() => {
 }
 
 .created-code {
-  font-family: var(--font-display);
-  font-size: 26px;
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--rounded-sm);
+  font-family: var(--font-mono);
+  font-size: 20px;
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
   color: var(--color-accent-dark);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(184, 150, 12, 0.3);
   animation: pop-in var(--duration-slow) var(--ease-spring);
 }
 
@@ -544,11 +550,29 @@ tbody tr.is-new {
 }
 
 .code-text {
-  font-family: var(--font-display);
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: var(--color-ink-primary);
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--rounded-sm);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary-dark);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border-hairline);
+  transition: background-color var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+tbody tr:hover .code-text {
+  background: var(--color-surface-raised);
+  border-color: var(--color-primary-tint-strong);
+}
+
+tbody tr.is-new .code-text {
+  color: var(--color-accent-dark);
+  background: var(--color-surface-raised);
+  border-color: rgba(184, 150, 12, 0.35);
 }
 
 .status-chip {
