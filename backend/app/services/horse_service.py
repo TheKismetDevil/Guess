@@ -1,12 +1,72 @@
 """Horse data management business logic service."""
 
+from collections import Counter
+
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.horse import Horse
 from app.schemas.horse import HorseCreate, HorseUpdate
+
+
+def _hemisphere_label(hemisphere: str) -> str:
+    return "南半球" if hemisphere == "south" else "北半球"
+
+
+async def _get_existing_origin_hemisphere(
+    db: AsyncSession, origin: str
+) -> str | None:
+    """Return the established hemisphere for ``origin``, if any horse has one."""
+    stmt = (
+        select(Horse.hemisphere)
+        .where(Horse.origin == origin, Horse.hemisphere.isnot(None))
+        .limit(1)
+    )
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _backfill_origin_hemisphere(
+    db: AsyncSession, origin: str, hemisphere: str
+) -> None:
+    """Ensure any legacy horse of the same origin with NULL hemisphere matches."""
+    await db.execute(
+        update(Horse)
+        .where(Horse.origin == origin, Horse.hemisphere.is_(None))
+        .values(hemisphere=hemisphere)
+    )
+
+
+async def _resolve_origin_hemisphere_for_create(
+    db: AsyncSession, origin: str | None, hemisphere: str | None
+) -> str | None:
+    if origin is None:
+        if hemisphere is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "ORIGIN_REQUIRED_FOR_HEMISPHERE",
+                    "message": "未设置出生国时不能单独设置半球",
+                },
+            )
+        return None
+
+    existing_hs = await _get_existing_origin_hemisphere(db, origin)
+    if existing_hs is not None:
+        if hemisphere is not None and hemisphere != existing_hs:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "ORIGIN_HEMISPHERE_CONFLICT",
+                    "message": f"出生国「{origin}」已绑定为{_hemisphere_label(existing_hs)}，如需更改请使用切换半球功能",
+                },
+            )
+        return existing_hs
+
+    if hemisphere is not None:
+        await _backfill_origin_hemisphere(db, origin, hemisphere)
+    return hemisphere
 
 
 async def get_horses(
@@ -31,7 +91,8 @@ async def get_horse(db: AsyncSession, horse_id: int) -> Horse | None:
 async def create_horse(db: AsyncSession, data: HorseCreate) -> Horse:
     """Create a new horse.
 
-    Raises 409 if a horse with the same name already exists.
+    Raises 409 if a horse with the same name already exists, or if the
+    requested hemisphere conflicts with the origin's established hemisphere.
     """
     existing = await db.execute(
         select(Horse).where(Horse.name == data.name)
@@ -45,7 +106,12 @@ async def create_horse(db: AsyncSession, data: HorseCreate) -> Horse:
             },
         )
 
-    horse = Horse(**data.model_dump())
+    payload = data.model_dump()
+    payload["hemisphere"] = await _resolve_origin_hemisphere_for_create(
+        db, payload["origin"], payload["hemisphere"]
+    )
+
+    horse = Horse(**payload)
     db.add(horse)
     await db.flush()
     await db.refresh(horse)
@@ -58,7 +124,8 @@ async def update_horse(
     """Update a horse's attributes. Only provided fields are updated.
 
     Raises 404 if horse not found.
-    Raises 409 if the new name conflicts with an existing horse.
+    Raises 409 if the new name conflicts with an existing horse, or if the
+    hemisphere conflicts with the origin's established hemisphere.
     Raises 400 if previous_result provided without date or position.
     """
     horse = await get_horse(db, horse_id)
@@ -111,6 +178,39 @@ async def update_horse(
             },
         )
 
+    # Enforce origin <-> hemisphere consistency
+    if "origin" in update_data or "hemisphere" in update_data:
+        target_origin = (
+            update_data["origin"] if "origin" in update_data else horse.origin
+        )
+        if target_origin is None:
+            if update_data.get("hemisphere") is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "ORIGIN_REQUIRED_FOR_HEMISPHERE",
+                        "message": "未设置出生国时不能单独设置半球",
+                    },
+                )
+            update_data["hemisphere"] = None
+        else:
+            existing_hs = await _get_existing_origin_hemisphere(db, target_origin)
+            if "hemisphere" in update_data:
+                req_hs = update_data["hemisphere"]
+                if existing_hs is not None and req_hs != existing_hs:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "ORIGIN_HEMISPHERE_CONFLICT",
+                            "message": f"出生国「{target_origin}」已绑定为{_hemisphere_label(existing_hs)}，如需更改请使用切换半球功能",
+                        },
+                    )
+                if req_hs is not None and existing_hs is None:
+                    await _backfill_origin_hemisphere(db, target_origin, req_hs)
+            elif existing_hs is not None:
+                # Origin changed without explicit hemisphere -> inherit target origin's hemisphere
+                update_data["hemisphere"] = existing_hs
+
     for field, value in update_data.items():
         setattr(horse, field, value)
 
@@ -136,33 +236,22 @@ async def delete_horse(db: AsyncSession, horse_id: int) -> None:
 
 
 async def get_origins_stats(db: AsyncSession) -> list[dict]:
-    """Get origin (country) usage frequency statistics with hemisphere info."""
+    """Get origin (country) usage frequency statistics with its unified hemisphere."""
     stmt = (
-        select(Horse.origin, func.count(Horse.id).label("count"))
+        select(
+            Horse.origin,
+            func.count(Horse.id).label("count"),
+            func.max(Horse.hemisphere).label("hemisphere"),
+        )
         .where(Horse.origin.isnot(None))
         .group_by(Horse.origin)
         .order_by(func.count(Horse.id).desc(), Horse.origin.asc())
     )
     result = await db.execute(stmt)
-    rows = []
-    for row in result.all():
-        origin = row[0]
-        hs = await _get_common_hemisphere(db, origin)
-        rows.append({"origin": origin, "count": row[1], "hemisphere": hs})
-    return rows
-
-
-async def _get_common_hemisphere(db: AsyncSession, origin: str) -> str | None:
-    """Get the most common hemisphere for a given origin."""
-    stmt = (
-        select(Horse.hemisphere, func.count(Horse.id).label("cnt"))
-        .where(Horse.origin == origin, Horse.hemisphere.isnot(None))
-        .group_by(Horse.hemisphere)
-        .order_by(func.count(Horse.id).desc())
-    )
-    result = await db.execute(stmt)
-    row = result.first()
-    return row[0] if row else None
+    return [
+        {"origin": row[0], "count": row[1], "hemisphere": row[2]}
+        for row in result.all()
+    ]
 
 
 async def get_locations_stats(db: AsyncSession) -> list[dict]:
@@ -178,14 +267,25 @@ async def get_locations_stats(db: AsyncSession) -> list[dict]:
 
 
 async def toggle_hemisphere(db: AsyncSession, origin: str) -> dict:
-    """Toggle hemisphere for all horses with the given origin."""
-    stmt = select(Horse).where(Horse.origin == origin, Horse.hemisphere.isnot(None))
+    """Toggle hemisphere uniformly for all horses with the given origin."""
+    origin = origin.strip()
+    stmt = select(Horse).where(Horse.origin == origin)
     result = await db.execute(stmt)
     horses = list(result.scalars().all())
+    if not horses:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "NOT_FOUND",
+                "message": f"出生国「{origin}」暂无关联马匹",
+            },
+        )
 
-    new_hs = None
+    non_null = [h.hemisphere for h in horses if h.hemisphere in ("north", "south")]
+    current_hs = Counter(non_null).most_common(1)[0][0] if non_null else "south"
+    new_hs = "south" if current_hs == "north" else "north"
+
     for h in horses:
-        new_hs = "south" if h.hemisphere == "north" else "north"
         h.hemisphere = new_hs
 
     await db.flush()
