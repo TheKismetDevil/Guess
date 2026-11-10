@@ -400,14 +400,12 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - 比赛页面向 `HorseDetailCard` 传入 `race.date` 作为 `referenceDate`，确保显示比赛中实际年龄。
 - `RaceHorse.snapshot_data` 中 `age` 字段已被 `birth_year` 完全替代；前端不再兼容读取 `age`，所有快照统一使用 `birth_year`。
 
-**出生国/所属地 新增选择模式（Story 4.x）：**
-- 出生国（`origin`）下拉使用原生 `<select>`，底部选项 "+ 新增国家"，选中后切换为文本输入模式。
-- 新增国家时必须选择南北半球（`north`/`south`），否则无法确认。
-- 选择已有国家时自动填充 `hemisphere`（来自 `countryHemispheres` 映射，由后端 `getOriginsStats()` 返回各国家最常见的半球）。
-- 所属地（`location`）与出生国完全独立的字段，逻辑相同但没有半球信息。
-- 新增确认后不立即修改 `sortedCountries`/`sortedLocations`（防止未保存时出现幽灵数据），而是通过 `<option v-if="formOrigin && !sortedCountries.includes(formOrigin)">` 显示临时选项。
-- 保存后通过 `refreshCountryList()` 从后端重新拉取统计数据。
-- `POST /api/v1/horses/origins/{origin}/toggle-hemisphere` 端点用于翻转所有同产地马匹的半球（north↔south），前端在半球标签旁显示"切换半球"按钮。
+**出生国/所属地 新增选择与半球一致性模式（Story 4.x）：**
+- 出生国（`origin`）与半球（`hemisphere`）强制保持同国唯一一致：后端 `create_horse()` / `update_horse()` 自动去除 `origin`、`location` 首尾空白；未设置 `origin` 时禁止单独设置 `hemisphere`（400 `ORIGIN_REQUIRED_FOR_HEMISPHERE`）；已有出生国若已绑定半球，未传 `hemisphere` 时自动继承、传入冲突半球时拒绝（409 `ORIGIN_HEMISPHERE_CONFLICT`）；首次为已有无半球记录的出生国指定半球时自动回填同国记录。
+- `get_origins_stats()` 通过单条 `GROUP BY origin` SQL 返回各出生国使用频次与统一半球（无 N+1 查询）。
+- `POST /api/v1/horses/origins/{origin}/toggle-hemisphere` 端点将该出生国下**所有**马匹统一更新为同一目标半球（不存在该出生国返回 404），前端切换成功后同步更新列表中的全部同国马匹。
+- 出生国（`origin`）下拉使用原生 `<select>`，包含 "+ 新增国家"，选中后切换为文本输入模式；若输入的国家名已存在于 `sortedCountries` 且所选半球与既有绑定冲突，前端直接拦截提示。编辑马匹切换 `origin` 时须一并携带对应的 `hemisphere`。
+- 所属地（`location`）与出生国完全独立，逻辑相同但没有半球信息。新增确认后不立即修改 `sortedCountries`/`sortedLocations`，而是显示临时选项，保存后通过 `refreshCountryList()` 刷新。
 
 **UI 动效与共享原语（frontend lively-ui 重构）：**
 - 设计令牌（`variables.css`）新增：tint 色（`--color-primary-tint` / `--color-accent-tint` / `--color-destructive-tint` 等，替代散落的 `#F0F7F2`、`#FFFDF0`、`#FFF5F5`）、渐变（`--gradient-brand` / `--gradient-gold` / `--gradient-silver` / `--gradient-bronze`）、`--shadow-lg` / `--shadow-xl` / `--shadow-glow-gold`、`--rounded-xl`，以及动效令牌 `--ease-out` / `--ease-spring` / `--ease-in-out`、`--duration-fast|base|slow`、`--stagger-step`。新代码优先用令牌，不要再写裸色值。
@@ -440,4 +438,4 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Review quarterly for outdated rules
 - Remove rules that become obvious over time
 
-Last Updated: 2026-11-09 (9-table database schema and Alembic baseline, proactive token refresh, optional-auth 401 responses, and session sync across tabs and on wake)
+Last Updated: 2026-11-10 (origin-hemisphere consistency enforcement, single-query origins stats, and uniform hemisphere toggle)
