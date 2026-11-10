@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onMounted, ref, shallowRef } from 'vue'
 import axios from 'axios'
 import {
   previewHistory,
@@ -85,6 +85,11 @@ const scoreLoading = ref(false)
 const detailError = ref('')
 const scoreError = ref('')
 const undoTarget = ref<ImportBatch | null>(null)
+const undoError = ref('')
+const undoDialog = ref<HTMLDialogElement | null>(null)
+const undoCancel = ref<HTMLButtonElement | null>(null)
+const batchHeading = ref<HTMLHeadingElement | null>(null)
+let undoTrigger: HTMLElement | null = null
 let detailRequest = 0
 let scoreRequest = 0
 
@@ -249,39 +254,51 @@ async function saveScore(score: HistoryScore & { draft: number | string }) {
   }
 }
 
+async function openUndo(item: ImportBatch, event: MouseEvent) {
+  if (busy.value || undoTarget.value) return
+  undoTrigger = event.currentTarget as HTMLButtonElement
+  undoError.value = ''
+  undoTarget.value = item
+  await nextTick()
+  undoDialog.value?.showModal()
+  undoCancel.value?.focus()
+}
+
+function closeUndo(focusTarget: HTMLElement | null) {
+  undoDialog.value?.close()
+  undoTarget.value = null
+  undoTrigger = null
+  focusTarget?.focus()
+}
+
+function cancelUndo() {
+  if (!busy.value) closeUndo(undoTrigger)
+}
+
 async function confirmUndo() {
   if (!undoTarget.value || busy.value) return
   busy.value = true
   error.value = ''
+  undoError.value = ''
   message.value = ''
   try {
-    const id = undoTarget.value.id
-    await undoHistoryBatch(id)
-    undoTarget.value = null
+    await undoHistoryBatch(undoTarget.value.id)
     closeBatch()
-    message.value = '已删除该导入批次并回滚对应历史成绩，排行榜已重新计算。'
     await loadBatches()
+    closeUndo(batchHeading.value)
+    message.value = '已删除该导入批次并回滚对应历史成绩，排行榜已重新计算。'
   } catch (err) {
-    error.value = errorText(err)
+    undoError.value = errorText(err)
   } finally {
     busy.value = false
   }
-}
-
-function handleKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && undoTarget.value && !busy.value) {
-    undoTarget.value = null
+  if (undoError.value) {
+    await nextTick()
+    undoCancel.value?.focus()
   }
 }
 
-onMounted(() => {
-  loadBatches()
-  document.addEventListener('keydown', handleKeydown)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown)
-})
+onMounted(loadBatches)
 </script>
 
 <template>
@@ -477,7 +494,7 @@ onUnmounted(() => {
     <!-- Batches Section -->
     <section class="batches-section">
       <div class="section-toolbar">
-        <h2 class="section-title">导入批次</h2>
+        <h2 ref="batchHeading" class="section-title" tabindex="-1">导入批次</h2>
         <span v-if="pageState === 'success'" class="summary">
           共 <strong>{{ batches.length }}</strong> 个批次，累计导入 {{ totalImportedRaces }} 场比赛 · {{ totalImportedScores }} 条成绩
         </span>
@@ -561,7 +578,7 @@ onUnmounted(() => {
                     class="row-btn row-btn-danger"
                     :title="`撤销「${item.filename}」`"
                     :disabled="busy"
-                    @click="undoTarget = item"
+                    @click="openUndo(item, $event)"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                       <polyline points="3 6 5 6 21 6" />
@@ -579,28 +596,29 @@ onUnmounted(() => {
       </div>
 
       <!-- Undo Confirmation Modal -->
-      <div
-        v-if="undoTarget"
-        class="modal-overlay ui-anim-overlay"
-        role="dialog"
-        aria-modal="true"
+      <dialog
+        ref="undoDialog"
+        class="undo-confirm ui-anim-dialog"
         aria-labelledby="undo-batch-title"
-        @click.self="!busy && (undoTarget = null)"
+        aria-describedby="undo-batch-message"
+        @cancel.prevent="cancelUndo"
+        @click.self="cancelUndo"
       >
-        <div class="modal-content ui-anim-dialog undo-confirm" role="alert">
+        <div v-if="undoTarget" class="modal-content">
           <h2 id="undo-batch-title" class="modal-title">撤销导入批次</h2>
-          <p class="modal-message">
+          <p id="undo-batch-message" class="modal-message">
             确认撤销「{{ undoTarget.filename }}」？将删除该导入批次记录，移除新增的 {{ undoTarget.race_count }} 场比赛、{{ undoTarget.score_count }} 条成绩，并恢复 {{ undoTarget.updated_races }} 场更新前的数据。若存在后续导入更新或更新后的人工修分，会提示冲突并停止撤销。请保留原始 Excel。
           </p>
+          <p v-if="undoError" class="inline-error modal-error" role="alert">{{ undoError }}</p>
           <div class="modal-actions">
-            <button type="button" class="ui-btn ui-btn--ghost" :disabled="busy" @click="undoTarget = null">取消</button>
+            <button ref="undoCancel" type="button" class="ui-btn ui-btn--ghost" :disabled="busy" @click="cancelUndo">取消</button>
             <button type="button" class="ui-btn ui-btn--danger-solid" :disabled="busy" @click="confirmUndo">
               <span v-if="busy" class="ui-spinner" aria-hidden="true"></span>
               确认撤销
             </button>
           </div>
         </div>
-      </div>
+      </dialog>
     </section>
 
     <!-- Batch Races Card -->
@@ -1378,23 +1396,31 @@ onUnmounted(() => {
    Modal (Undo Confirmation)
    ========================================= */
 
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.undo-confirm {
+  width: min(440px, calc(100% - 2 * var(--spacing-4)));
+  max-height: calc(100% - 2 * var(--spacing-4));
+  margin: auto;
+  padding: 0;
+  border: 0;
+  background: var(--color-surface-raised);
+  border-radius: var(--rounded-xl);
+  color: inherit;
+}
+
+.undo-confirm::backdrop {
   background: rgba(13, 30, 18, 0.5);
-  padding: var(--spacing-4);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .undo-confirm::backdrop {
+    animation: fade-in var(--duration-base) ease backwards;
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+  }
 }
 
 .modal-content {
-  background: var(--color-surface-raised);
-  border-radius: var(--rounded-xl);
   padding: var(--spacing-6);
-  max-width: 440px;
-  width: 100%;
 }
 
 .modal-title {
@@ -1410,6 +1436,10 @@ onUnmounted(() => {
   color: var(--color-ink-secondary);
   line-height: 1.65;
   margin: 0 0 var(--spacing-6);
+}
+
+.modal-error {
+  margin: 0 0 var(--spacing-3);
 }
 
 .modal-actions {
@@ -1503,7 +1533,7 @@ onUnmounted(() => {
     flex: 0 0 5.5em;
     font-size: 11px;
     font-weight: 600;
-    color: var(--color-ink-disabled);
+    color: var(--color-ink-secondary);
   }
 
   .batch-table .cell-primary,
