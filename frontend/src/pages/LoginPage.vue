@@ -224,7 +224,7 @@ async function handleSubmit() {
             <input
               id="login-invite-code"
               v-model="inviteCode"
-              class="ui-input code-input"
+              class="ui-input"
               type="text"
               placeholder="请输入 8 位邀请码"
               maxlength="8"
@@ -298,13 +298,6 @@ async function handleSubmit() {
 
 .tab-btn.active {
   color: var(--color-primary);
-}
-
-.code-input {
-  font-family: var(--font-display);
-  font-size: 20px;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
 }
 
 .submit-btn {

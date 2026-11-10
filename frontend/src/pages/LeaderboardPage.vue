@@ -215,9 +215,19 @@ onMounted(loadData)
           <div class="filter-section">
             <label class="filter-label">比赛日期</label>
             <div class="filter-range date-range">
-              <input type="date" v-model="dateFrom" aria-label="开始日期" />
+              <input
+                type="date"
+                v-model="dateFrom"
+                :class="{ 'is-empty': !dateFrom }"
+                aria-label="开始日期"
+              />
               <span class="range-sep">—</span>
-              <input type="date" v-model="dateTo" aria-label="结束日期" />
+              <input
+                type="date"
+                v-model="dateTo"
+                :class="{ 'is-empty': !dateTo }"
+                aria-label="结束日期"
+              />
             </div>
             <p v-if="dateError" class="date-error" role="alert">{{ dateError }}</p>
           </div>
@@ -344,7 +354,6 @@ onMounted(loadData)
 .race-list li:last-child { border-bottom: 0; }
 .race-list a { color: var(--color-primary); }
 .race-source { color: var(--color-ink-secondary); font-size: 12px; }
-.date-range input { width: auto; min-width: 0; max-width: 160px; }
 .date-error { color: var(--color-destructive); font-size: 13px; }
 th.col-gap { text-align: right; }
 .historical-import { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; font-size: 14px; }
@@ -522,17 +531,32 @@ th.col-gap { text-align: right; }
 
 .filter-range input {
   width: 120px;
+  min-height: 38px;
   padding: 7px 12px;
   border: 1px solid var(--color-border-hairline);
   border-radius: var(--rounded-md);
   font-size: var(--text-body-sm);
   color: var(--color-ink-primary);
   background: var(--color-surface-base);
-  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-base) var(--ease-out);
+  transition:
+    border-color var(--duration-fast) ease,
+    box-shadow var(--duration-base) var(--ease-out),
+    background-color var(--duration-fast) ease;
+}
+
+.filter-range.date-range input {
+  width: 160px;
+  flex: 0 1 160px;
+  min-width: 0;
+}
+
+.filter-range input:hover {
+  border-color: var(--color-border-strong);
 }
 
 .filter-range input:focus {
   outline: none;
+  background: var(--color-surface-raised);
   border-color: var(--color-primary);
   box-shadow: 0 0 0 4px rgba(26, 86, 50, 0.14);
 }
@@ -555,6 +579,7 @@ th.col-gap { text-align: right; }
 /* Table */
 .table-card {
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-hairline);

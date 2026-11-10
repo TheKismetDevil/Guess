@@ -890,6 +890,7 @@ onUnmounted(() => {
                 v-model="editDate"
                 type="date"
                 class="date-input"
+                :class="{ 'is-empty': !editDate }"
                 @blur="saveDate"
                 @keydown.enter.prevent="saveDate"
                 @keydown.escape.prevent="cancelDateEdit"

@@ -58,7 +58,7 @@ async function handleSubmit() {
 
   try {
     await resetPassword({
-      invite_code: inviteCode.value.trim(),
+      invite_code: inviteCode.value.trim().toUpperCase(),
       new_password: newPassword.value.trim(),
     })
     router.push('/login?reset=success')
@@ -106,7 +106,7 @@ async function handleSubmit() {
         <input
           id="reset-invite-code"
           v-model="inviteCode"
-          class="ui-input code-input"
+          class="ui-input"
           type="text"
           placeholder="请输入 8 位邀请码"
           maxlength="8"
@@ -164,13 +164,6 @@ async function handleSubmit() {
 </template>
 
 <style scoped>
-.code-input {
-  font-family: var(--font-display);
-  font-size: 20px;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-}
-
 .submit-btn {
   margin-top: var(--spacing-2);
   min-height: 48px;
