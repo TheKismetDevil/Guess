@@ -11,7 +11,7 @@ from alembic.runtime.migration import MigrationContext
 from fastapi import HTTPException
 from openpyxl import load_workbook
 from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.core.database import Base
 from app.models.historical_score import HistoricalImportBatch, HistoricalImportChange
@@ -20,10 +20,12 @@ from app.models.race import Race, RaceHorse, RaceStatus
 from app.models.user import User
 from app.models.vote import Vote
 from app.schemas.auth import RegisterRequest
+from app.schemas.horse import HorseCreate
 from app.schemas.result import ResultEntry, ResultPosition
 from app.services import (
     auth_service,
     historical_management_service,
+    horse_service,
     invite_code_service,
     leaderboard_service,
     result_service,
@@ -119,6 +121,31 @@ async def test_baseline_migration_upgrade_downgrade_and_zero_model_diff(pg_datab
     await migrate()
     async with sessions() as db:
         assert await leaderboard_service.get_leaderboard(db) == []
+
+
+async def test_concurrent_first_origin_binding_serializes_competing_creates(pg_database):
+    _, sessions, migrate = pg_database
+    await migrate()
+
+    async with sessions() as first, sessions() as second:
+        await horse_service.create_horse(
+            first, HorseCreate(name="First", origin="日本", hemisphere="north")
+        )
+        competing = HorseCreate(name="Second", origin="日本", hemisphere="south")
+        await second.execute(text("SET LOCAL lock_timeout = '250ms'"))
+        with pytest.raises(DBAPIError) as blocked:
+            await horse_service.create_horse(second, competing)
+        assert blocked.value.orig.sqlstate == "55P03"
+        await second.rollback()
+        await first.commit()
+
+        with pytest.raises(HTTPException) as conflict:
+            await horse_service.create_horse(second, competing)
+        assert conflict.value.status_code == 409
+        assert conflict.value.detail["code"] == "ORIGIN_HEMISPHERE_CONFLICT"
+        assert await horse_service.get_origins_stats(second) == [
+            {"origin": "日本", "count": 1, "hemisphere": "north"}
+        ]
 
 
 async def test_concurrent_invite_creation_returns_one_conflict(pg_database, monkeypatch):

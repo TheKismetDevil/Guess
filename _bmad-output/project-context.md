@@ -402,9 +402,10 @@ _This file contains critical rules and patterns that AI agents must follow when 
 
 **出生国/所属地 新增选择与半球一致性模式（Story 4.x）：**
 - 出生国（`origin`）与半球（`hemisphere`）强制保持同国唯一一致：后端 `create_horse()` / `update_horse()` 自动去除 `origin`、`location` 首尾空白；未设置 `origin` 时禁止单独设置 `hemisphere`（400 `ORIGIN_REQUIRED_FOR_HEMISPHERE`）；已有出生国若已绑定半球，未传 `hemisphere` 时自动继承、传入冲突半球时拒绝（409 `ORIGIN_HEMISPHERE_CONFLICT`）；首次为已有无半球记录的出生国指定半球时自动回填同国记录。
-- `get_origins_stats()` 通过单条 `GROUP BY origin` SQL 返回各出生国使用频次与统一半球（无 N+1 查询）。
-- `POST /api/v1/horses/origins/{origin}/toggle-hemisphere` 端点将该出生国下**所有**马匹统一更新为同一目标半球（不存在该出生国返回 404），前端切换成功后同步更新列表中的全部同国马匹。
-- 出生国（`origin`）下拉使用原生 `<select>`，包含 "+ 新增国家"，选中后切换为文本输入模式；若输入的国家名已存在于 `sortedCountries` 且所选半球与既有绑定冲突，前端直接拦截提示。编辑马匹切换 `origin` 时须一并携带对应的 `hemisphere`。
+- PostgreSQL 使用事务级 advisory lock 串行化出生国半球相关的马匹写入和删除，覆盖该国尚无马匹时的首次绑定。
+- 统计、写入校验和切换共用出生国非空半球的 `DISTINCT` 查询。`get_origins_stats()` 在同一条 SQL 中关联各国马匹总数，半球为空的马匹也计入总数。
+- `POST /api/v1/horses/origins/{origin}/toggle-hemisphere` 端点将该出生国下**所有**马匹统一更新为同一目标半球（不存在该出生国返回 404，尚未绑定半球返回 409 `ORIGIN_HEMISPHERE_UNSET`），前端切换成功后同步更新列表中的全部同国马匹。
+- 出生国（`origin`）下拉使用原生 `<select>`，包含 "+ 新增国家"，选中后切换为文本输入模式；若输入的国家名已存在于 `sortedCountries` 且所选半球与既有绑定冲突，前端直接拦截提示。编辑马匹切换 `origin` 时须一并携带对应的 `hemisphere`。新增国家确认时先将半球留在表单中，保存成功后才从统计刷新页面的国家半球映射。
 - 所属地（`location`）与出生国完全独立，逻辑相同但没有半球信息。新增确认后不立即修改 `sortedCountries`/`sortedLocations`，而是显示临时选项，保存后通过 `refreshCountryList()` 刷新。
 
 **UI 动效与共享原语（frontend lively-ui 重构）：**

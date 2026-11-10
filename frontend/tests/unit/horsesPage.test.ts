@@ -107,6 +107,47 @@ describe('HorsesPage origin and hemisphere consistency', () => {
     wrapper.unmount()
   })
 
+  it('discards an unbound country hemisphere when the horse form is cancelled', async () => {
+    vi.mocked(api.getOriginsStats).mockResolvedValue([
+      { origin: '法国', count: 1, hemisphere: null },
+    ])
+
+    const wrapper = mount(HorsesPage, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.get('button.create-btn').trigger('click')
+
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    const originSelect = dialog.querySelectorAll('select')[1] as HTMLSelectElement
+    originSelect.value = '__new__'
+    originSelect.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    const countryInput = dialog.querySelector('input[placeholder="输入新增国家名称"]') as HTMLInputElement
+    countryInput.value = '法国'
+    countryInput.dispatchEvent(new Event('input'))
+    await flushPromises()
+
+    const confirmBtn = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent?.trim() === '确认')!
+    confirmBtn.click()
+    await flushPromises()
+    expect(dialog.querySelector('.hemisphere-badge')?.textContent).toBe('北半球')
+
+    const cancelBtn = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent?.trim() === '取消')!
+    cancelBtn.click()
+    await flushPromises()
+    await wrapper.get('button.create-btn').trigger('click')
+
+    const newDialog = document.body.querySelector('[role="dialog"]')!
+    const newOriginSelect = newDialog.querySelectorAll('select')[1] as HTMLSelectElement
+    newOriginSelect.value = '法国'
+    newOriginSelect.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    expect(newDialog.querySelector('.hemisphere-badge')?.textContent).toBe('未设置半球')
+    expect(api.createHorse).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('updates all horses of that origin in the table immediately when toggling hemisphere', async () => {
     vi.mocked(api.toggleHemisphere).mockResolvedValue({
       origin: '日本',

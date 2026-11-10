@@ -270,14 +270,21 @@ class TestHorseService:
             await toggle_hemisphere(db_session, "不存在")
         assert missing_exc.value.status_code == 404
 
-        # Even if legacy/raw rows had mixed or NULL hemispheres, toggle unifies all of them
+        # Count all horses, including those without a hemisphere.
         h1 = Horse(name="Aus1", origin="澳大利亚", hemisphere="south")
         h2 = Horse(name="Aus2", origin="澳大利亚", hemisphere="south")
-        h3 = Horse(name="Aus3", origin="澳大利亚", hemisphere="north")
+        h3 = Horse(name="Aus3", origin="澳大利亚", hemisphere="south")
         h4 = Horse(name="Aus4", origin="澳大利亚", hemisphere=None)
         jp = Horse(name="Jp1", origin="日本", hemisphere="north")
-        db_session.add_all([h1, h2, h3, h4, jp])
+        france = Horse(name="Fr1", origin="法国")
+        db_session.add_all([h1, h2, h3, h4, jp, france])
         await db_session.flush()
+
+        with pytest.raises(HTTPException) as unset_exc:
+            await toggle_hemisphere(db_session, "法国")
+        assert unset_exc.value.status_code == 409
+        assert unset_exc.value.detail["code"] == "ORIGIN_HEMISPHERE_UNSET"
+        assert france.hemisphere is None
 
         res1 = await toggle_hemisphere(db_session, "澳大利亚")
         assert res1 == {
@@ -295,6 +302,7 @@ class TestHorseService:
         assert stats == [
             {"origin": "澳大利亚", "count": 4, "hemisphere": "south"},
             {"origin": "日本", "count": 1, "hemisphere": "north"},
+            {"origin": "法国", "count": 1, "hemisphere": None},
         ]
 
 

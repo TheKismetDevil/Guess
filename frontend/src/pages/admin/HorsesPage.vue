@@ -142,9 +142,6 @@ function confirmNewCountry() {
     modalError.value = ''
     formOrigin.value = name
     formHemisphere.value = existingHs || newCountryHemisphere.value
-    if (!existingHs) {
-      countryHemispheres.value[name] = formHemisphere.value
-    }
     isAddingCountry.value = false
     formNewCountry.value = ''
     return
@@ -154,10 +151,7 @@ function confirmNewCountry() {
   formHemisphere.value = newCountryHemisphere.value
   isAddingCountry.value = false
   formNewCountry.value = ''
-  countryHemispheres.value[name] = newCountryHemisphere.value
-  // Note: sortedCountries is NOT modified here — the new country only
-  // appears as a temporary option in the select until the form is saved.
-  // After save, refreshCountryList() adds it to sortedCountries.
+  // Keep the new country and hemisphere in the form until save succeeds.
 }
 
 function cancelNewCountry() {
