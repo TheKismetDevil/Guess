@@ -42,6 +42,40 @@ describe('InviteCodeInput segmented boxes across auth pages', () => {
     const resetBoxes = resetWrapper.findAll('.code-box')
     expect(resetBoxes).toHaveLength(8)
     expect(resetBoxes[0]!.attributes('id')).toBe('reset-invite-code')
+
+    for (const [wrapper, firstBoxId] of [
+      [loginWrapper, 'login-invite-code'],
+      [registerWrapper, 'invite-code'],
+      [resetWrapper, 'reset-invite-code'],
+    ] as const) {
+      const group = wrapper.get('[role="group"]')
+      const labelId = group.attributes('aria-labelledby')
+      expect(labelId).toBeTruthy()
+      expect(wrapper.get(`label[for="${firstBoxId}"]`).attributes('id')).toBe(labelId)
+      expect(group.get('input').attributes('aria-label')).toBe('邀请码第 1 位')
+    }
+    expect(resetWrapper.get('label[for="reset-invite-code"]').text()).toContain('注册时绑定的')
+  })
+
+  it('leaves composing key presses to the input method without editing slots or moving focus', async () => {
+    const wrapper = mount(InviteCodeInput, {
+      attachTo: document.body,
+      props: { modelValue: 'K' },
+    })
+    const boxes = wrapper.findAll<HTMLInputElement>('input.code-box')
+    const composingBox = boxes[1]!.element
+    composingBox.focus()
+
+    for (const key of ['Backspace', 'ArrowLeft', 'ArrowRight', ' ']) {
+      const event = new KeyboardEvent('keydown', { key, isComposing: true, cancelable: true })
+      composingBox.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(false)
+    }
+    await flushPromises()
+
+    expect(boxes[0]!.element.value).toBe('K')
+    expect(document.activeElement).toBe(composingBox)
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 
   it('auto-advances focus on character entry, uppercases input, and supports Backspace & single-box overwrite', async () => {

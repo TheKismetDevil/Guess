@@ -162,11 +162,12 @@ async function handleSubmit() {
 
       <!-- Invite code -->
       <div class="ui-field">
-        <label class="ui-label" for="invite-code">邀请码（8 位）</label>
+        <label id="invite-code-label" class="ui-label" for="invite-code">邀请码（8 位）</label>
         <InviteCodeInput
           id="invite-code"
           v-model="inviteCode"
           :invalid="!!fieldErrors.inviteCode"
+          aria-labelledby="invite-code-label"
           :aria-describedby="fieldErrors.inviteCode ? 'invite-code-error' : undefined"
           @input="fieldErrors.inviteCode = ''"
         />

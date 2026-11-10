@@ -6,6 +6,7 @@ const props = withDefaults(
     id?: string
     length?: number
     invalid?: boolean
+    ariaLabelledby?: string
     ariaDescribedby?: string
     disabled?: boolean
   }>(),
@@ -137,6 +138,8 @@ function handleCompositionEnd(index: number, event: CompositionEvent) {
 }
 
 function handleKeydown(index: number, event: KeyboardEvent) {
+  if (event.isComposing) return
+
   if (event.key === 'Backspace') {
     event.preventDefault()
     if (slots.value[index]) {
@@ -201,6 +204,7 @@ function handleFocus(index: number) {
     :class="{ 'is-invalid': invalid }"
     :style="{ '--code-length': length }"
     role="group"
+    :aria-labelledby="ariaLabelledby"
     :aria-describedby="ariaDescribedby"
   >
     <input

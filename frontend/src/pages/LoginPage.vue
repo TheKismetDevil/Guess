@@ -221,11 +221,12 @@ async function handleSubmit() {
         <!-- Invite code mode -->
         <div v-else key="invite_code">
           <div class="ui-field">
-            <label class="ui-label" for="login-invite-code">邀请码（8 位）</label>
+            <label id="login-invite-code-label" class="ui-label" for="login-invite-code">邀请码（8 位）</label>
             <InviteCodeInput
               id="login-invite-code"
               v-model="inviteCode"
               :invalid="!!errorMessage"
+              aria-labelledby="login-invite-code-label"
               @input="clearError"
             />
           </div>

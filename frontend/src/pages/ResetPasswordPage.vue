@@ -103,11 +103,12 @@ async function handleSubmit() {
       </div>
 
       <div class="ui-field">
-        <label class="ui-label" for="reset-invite-code">邀请码（注册时绑定的 8 位码）</label>
+        <label id="reset-invite-code-label" class="ui-label" for="reset-invite-code">邀请码（注册时绑定的 8 位码）</label>
         <InviteCodeInput
           id="reset-invite-code"
           v-model="inviteCode"
           :invalid="!!error"
+          aria-labelledby="reset-invite-code-label"
           @input="clearError"
         />
       </div>
